@@ -3,24 +3,30 @@ lib/
 ├── app.dart                   # Root widget, routes, and theming
 ├── core/                      # Shared constants, utils, styles
 │   ├── constants.dart
-│   ├── validators.dart        # Password strength logic, etc.
+│   ├── validators.dart        # Password strength logic
 │   └── theme.dart
 ├── features/
 │   ├── auth/                  # Auth-related screens, logic, state
-│   │   ├── data/              # Firebase Auth API logic
+│   │   ├── data/
 │   │   │   └── auth_repository.dart
-│   │   ├── domain/            # Abstract interfaces or models (optional)
-│   │   ├── presentation/      # UI files: login, register, etc.
+│   │   ├── domain/
+│   │   ├── presentation/
 │   │   │   ├── login_screen.dart
 │   │   │   ├── register_screen.dart
-│   │   │   ├── verify_email_screen.dart
-│   │   │   └── reset_password_screen.dart
-│   │   └── auth_controller.dart  # State controller (with Riverpod, Provider, etc.)
+│   │   │   ├── reset_password_screen.dart
+│   │   │   └── verify_email_screen.dart
+│   │   └── auth_controller.dart
 │
-│   ├── game/                  # Game UI + logic
-│   │   ├── data/              # GameService, WebSocket logic
-│   │   ├── presentation/      # GameBoard, Lobby, Invite screens
-│   │   └── game_controller.dart
+│   ├── game/                  # Game UI + multiplayer logic
+│   │   ├── data/
+│   │   │   └── websocket_service.dart   # WebSocket client connection & messaging
+│   │   ├── presentation/
+│   │   │   └── lobby_screen.dart        # Real-time online lobby + invites
+│   │   └── game_controller.dart         # (WIP) Game logic handler
 │
-│   └── home/                  # Home screen after login
-│       └── home_screen.dart
+│   └── home/
+│       └── home_screen.dart             # Home screen after login
+
+
+dart websocket_server.dart
+
