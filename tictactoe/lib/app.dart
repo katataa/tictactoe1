@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'core/theme.dart'; // 👈 make sure this exists
 
 class MyApp extends StatelessWidget {
   final Widget startScreen;
@@ -9,10 +10,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Tic Tac Toe',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      theme: appTheme, // 👈 use shared theme
       home: startScreen,
     );
   }

@@ -13,7 +13,10 @@ void main() async {
   final user = auth.currentUser;
   final bool verified = user?.emailVerified ?? false;
 
-  runApp(MyApp(
-    startScreen: user != null && verified ? const HomeScreen() : const LoginScreen(),
+  runApp(ProviderScope( // 👈 Wrap in this
+    child: MyApp(
+      startScreen: user != null && verified ? const HomeScreen() : const LoginScreen(),
+    ),
   ));
 }
+

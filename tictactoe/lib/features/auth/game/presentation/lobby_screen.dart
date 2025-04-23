@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'bot_game_screen.dart';
 import '../data/websocket_service.dart';
+import 'game_board_screen.dart';
 
 class LobbyScreen extends StatefulWidget {
   final String username;
@@ -30,7 +32,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
           setState(() => inviteFrom = msg['from']);
           break;
         case 'invite_accepted':
-          Navigator.pushNamed(context, '/game'); // <- make sure this exists!
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => GameBoardScreen(
+                username: widget.username,
+                opponent: inviteFrom!,
+                symbol: 'O', // invited player
+                gameId: 'some-shared-id',
+                socket: _ws,
+              ),
+            ),
+          );
           break;
         case 'move':
           // Handle move updates here (later)
@@ -89,6 +102,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 );
               },
             ),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const BotGameScreen()),
+              );
+            },
+            icon: Icon(Icons.smart_toy),
+            label: Text('Play vs Bot'),
           ),
         ],
       ),

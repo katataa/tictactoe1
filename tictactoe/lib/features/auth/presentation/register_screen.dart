@@ -31,6 +31,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         passwordController.text,
         usernameController.text,
       );
+      if (!mounted) return;
+
       showSnack("Check your email for verification!");
       Navigator.pop(context);
     } catch (e) {

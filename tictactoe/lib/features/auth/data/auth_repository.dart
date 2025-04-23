@@ -27,8 +27,19 @@ class AuthRepository {
     await _auth.currentUser?.sendEmailVerification();
   }
 
-  bool isEmailVerified() {
-    return _auth.currentUser?.emailVerified ?? false;
+  bool isEmailVerified() => _auth.currentUser?.emailVerified ?? false;
+
+  Future<bool> refreshAndCheckEmailVerified() async {
+    final user = _auth.currentUser;
+    if (user != null) {
+      await user.reload();
+      return user.emailVerified;
+    }
+    return false;
+  }
+
+  Future<void> sendPasswordReset(String email) async {
+    await _auth.sendPasswordResetEmail(email: email);
   }
 
   Future<void> signOut() async {

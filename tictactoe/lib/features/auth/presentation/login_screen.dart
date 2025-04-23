@@ -56,6 +56,13 @@ class _LoginScreenState extends State<LoginScreen> {
   },
   child: const Text("Forgot your password?"),
 ),
+TextButton(
+  onPressed: () {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterScreen()));
+  },
+  child: const Text("Create an account"),
+),
+
 
           ],
         ),

@@ -1,0 +1,1 @@
+enum GameResult { ongoing, draw, win }

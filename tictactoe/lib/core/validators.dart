@@ -11,3 +11,13 @@ String? validatePassword(String password) {
   }
   return null;
 }
+String? validateEmail(String email) {
+  final regex = RegExp(r'^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}\$');
+  if (!regex.hasMatch(email)) return 'Invalid email format';
+  return null;
+}
+
+String? validateUsername(String username) {
+  if (username.length < 3) return 'Username must be at least 3 characters';
+  return null;
+}
