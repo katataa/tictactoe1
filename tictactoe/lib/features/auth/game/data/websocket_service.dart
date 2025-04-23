@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import '../../../../core/constants.dart';
+import 'package:tictactoe/core/constants.dart';
+
 
 
 typedef MessageHandler = void Function(Map<String, dynamic>);
