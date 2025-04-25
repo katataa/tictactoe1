@@ -12,6 +12,7 @@ lib/
 │   │   ├── domain/
 │   │   ├── presentation/
 │   │   │   ├── login_screen.dart
+│   │   │   ├── bot_screen_game.dart
 │   │   │   ├── register_screen.dart
 │   │   │   ├── reset_password_screen.dart
 │   │   │   └── verify_email_screen.dart

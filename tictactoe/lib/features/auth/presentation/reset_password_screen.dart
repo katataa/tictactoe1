@@ -18,6 +18,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       await FirebaseAuth.instance.sendPasswordResetEmail(email: emailController.text);
       showSnack("Check your inbox for reset instructions!");
       Navigator.pop(context);
+      
     } catch (e) {
       showSnack(e.toString());
     } finally {
