@@ -45,25 +45,30 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email')),
-            TextField(controller: passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
+            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
             const SizedBox(height: 16),
-            ElevatedButton(onPressed: loading ? null : login, child: const Text('Login')),
+            TextField(controller: passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder())),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: loading ? null : login,
+              style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              child: const Text('Login'),
+            ),
+            const SizedBox(height: 10),
             TextButton(
-  onPressed: () {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const ResetPasswordScreen()));
-  },
-  child: const Text("Forgot your password?"),
-),
-TextButton(
-  onPressed: () {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterScreen()));
-  },
-  child: const Text("Create an account"),
-),
-
-
+              onPressed: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const ResetPasswordScreen()));
+              },
+              child: const Text("Forgot your password?"),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterScreen()));
+              },
+              child: const Text("Create an account"),
+            ),
           ],
         ),
       ),

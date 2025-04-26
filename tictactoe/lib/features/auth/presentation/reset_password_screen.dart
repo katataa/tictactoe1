@@ -18,7 +18,6 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       await FirebaseAuth.instance.sendPasswordResetEmail(email: emailController.text);
       showSnack("Check your inbox for reset instructions!");
       Navigator.pop(context);
-      
     } catch (e) {
       showSnack(e.toString());
     } finally {
@@ -37,10 +36,15 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email')),
-            const SizedBox(height: 16),
-            ElevatedButton(onPressed: loading ? null : resetPassword, child: const Text('Send Reset Link')),
+            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: loading ? null : resetPassword,
+              style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              child: const Text('Send Reset Link'),
+            ),
           ],
         ),
       ),

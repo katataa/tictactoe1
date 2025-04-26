@@ -1,5 +1,4 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import '../data/websocket_service.dart';
 
@@ -27,10 +26,10 @@ class GameBoardScreen extends StatefulWidget {
 
 class _GameBoardScreenState extends State<GameBoardScreen> {
   List<String> board = List.filled(9, '');
-  List<String> moveHistory = [];
   String currentTurn = 'X';
   String? winner;
   bool isMyTurn = false;
+  bool gameEnded = false;
 
   late Duration myTime;
   late Duration opponentTime;
@@ -46,13 +45,13 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     opponentTime = widget.timeControl;
 
     myTicker = Ticker((_) {
-      if (isMyTurn && mounted && myTime.inSeconds > 0) {
+      if (!gameEnded && isMyTurn && mounted && myTime.inSeconds > 0) {
         setState(() => myTime -= const Duration(seconds: 1));
       }
     });
 
     opponentTicker = Ticker((_) {
-      if (!isMyTurn && mounted && opponentTime.inSeconds > 0) {
+      if (!gameEnded && !isMyTurn && mounted && opponentTime.inSeconds > 0) {
         setState(() => opponentTime -= const Duration(seconds: 1));
       }
     });
@@ -64,28 +63,41 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
             board = List<String>.from(msg['board']);
             currentTurn = msg['nextTurn'];
             winner = msg['winner'];
-            moveHistory.add('${msg['by']} -> ${msg['cell']}');
             isMyTurn = currentTurn == widget.symbol;
+            if (winner != null) {
+              gameEnded = true;
+            }
           });
           break;
 
         case 'restart_prompt':
-          showDialog(
-            context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('Restart Requested'),
-              content: const Text('Opponent wants to restart the game. Accept?'),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    widget.socket.acceptRestart();
-                    Navigator.pop(context);
-                  },
-                  child: const Text('Yes'),
-                ),
-              ],
-            ),
-          );
+          if (!mounted) return;
+          if (widget.symbol == 'O') {
+            showDialog(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: const Text('Rematch Requested'),
+                content: const Text('Opponent wants to rematch. Accept?'),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      widget.socket.acceptRestart();
+                      Navigator.pop(context);
+                    },
+                    child: const Text('Yes'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      widget.socket.declineRestart();
+                      Navigator.pop(context);
+                      Navigator.pop(context);
+                    },
+                    child: const Text('No'),
+                  ),
+                ],
+              ),
+            );
+          }
           break;
 
         case 'restart_confirmed':
@@ -93,15 +105,36 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
             board = List.filled(9, '');
             currentTurn = 'X';
             winner = null;
-            moveHistory.clear();
             isMyTurn = widget.symbol == 'X';
             myTime = widget.timeControl;
             opponentTime = widget.timeControl;
+            gameEnded = false;
           });
+          break;
+
+        case 'restart_declined':
+          if (!mounted) return;
+          showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('Rematch Declined'),
+              content: const Text('Opponent declined rematch. Returning to lobby...'),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Navigator.pop(context);
+                  },
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
           break;
 
         case 'disconnect_timeout':
           setState(() => winner = msg['winner']);
+          gameEnded = true;
           break;
       }
     };
@@ -124,6 +157,29 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
       widget.socket.sendMove(index);
       setState(() => isMyTurn = false);
     }
+  }
+
+  void confirmBackToLobby() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Leave Game?'),
+        content: const Text('Are you sure you want to go back to the lobby?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context);
+            },
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget buildCell(int i) {
@@ -174,32 +230,15 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     }
   }
 
-  Widget buildTimers() => Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+  Widget buildTimer() => Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Column(
-            children: [
-              const Text('You'),
-              Text('${myTime.inMinutes}:${(myTime.inSeconds % 60).toString().padLeft(2, '0')}'),
-            ],
+          const Text('Your time'),
+          Text(
+            '${myTime.inMinutes}:${(myTime.inSeconds % 60).toString().padLeft(2, '0')}',
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
           ),
-          Column(
-            children: [
-              Text(widget.opponent),
-              Text('${opponentTime.inMinutes}:${(opponentTime.inSeconds % 60).toString().padLeft(2, '0')}'),
-            ],
-          )
         ],
-      );
-
-  Widget buildMoveHistory() => Container(
-        width: 150,
-        color: Colors.grey.shade100,
-        padding: const EdgeInsets.all(8),
-        child: ListView.builder(
-          itemCount: moveHistory.length,
-          itemBuilder: (_, i) => Text(moveHistory[i]),
-        ),
       );
 
   @override
@@ -207,6 +246,10 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Tic Tac Toe"),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: confirmBackToLobby,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -214,29 +257,24 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
           )
         ],
       ),
-      body: Row(
-        children: [
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                gameStatus(),
-                const SizedBox(height: 16),
-                buildTimers(),
-                const SizedBox(height: 16),
-                AspectRatio(
-                  aspectRatio: 1,
-                  child: GridView.builder(
-                    itemCount: 9,
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3),
-                    itemBuilder: (_, i) => buildCell(i),
-                  ),
-                ),
-              ],
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            gameStatus(),
+            const SizedBox(height: 16),
+            buildTimer(),
+            const SizedBox(height: 16),
+            AspectRatio(
+              aspectRatio: 1,
+              child: GridView.builder(
+                itemCount: 9,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3),
+                itemBuilder: (_, i) => buildCell(i),
+              ),
             ),
-          ),
-          buildMoveHistory(),
-        ],
+          ],
+        ),
       ),
     );
   }

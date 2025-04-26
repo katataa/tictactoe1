@@ -51,6 +51,12 @@ class WebSocketService {
     }
   }
 
+  void declineRestart() {
+  if (_gameId != null) {
+    _channel.sink.add(jsonEncode({'type': 'restart_decline', 'gameId': _gameId}));
+  }
+}
+
   void acceptRestart() {
     if (_gameId != null) {
       _channel.sink.add(jsonEncode({'type': 'restart_accept', 'gameId': _gameId}));

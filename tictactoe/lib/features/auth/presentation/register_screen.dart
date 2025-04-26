@@ -1,6 +1,8 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../../../core/validators.dart';
 import '../../auth/data/auth_repository.dart';
+import '../../auth/presentation/verify_email_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -17,30 +19,44 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool loading = false;
 
-  void register() async {
-    final passwordError = validatePassword(passwordController.text);
-    if (passwordError != null) {
-      showSnack(passwordError);
-      return;
-    }
-
-    setState(() => loading = true);
-    try {
-      await _authRepo.signUp(
-        emailController.text,
-        passwordController.text,
-        usernameController.text,
-      );
-      if (!mounted) return;
-
-      showSnack("Check your email for verification!");
-      Navigator.pop(context);
-    } catch (e) {
-      showSnack(e.toString());
-    } finally {
-      setState(() => loading = false);
-    }
+ void register() async {
+  final passwordError = validatePassword(passwordController.text);
+  if (passwordError != null) {
+    showSnack(passwordError);
+    return;
   }
+
+  setState(() => loading = true);
+  try {
+    // Register user
+    await _authRepo.signUp(
+      emailController.text,
+      passwordController.text,
+      usernameController.text,
+    );
+
+    // ✅ Now sign in manually after registration
+    await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: emailController.text.trim(),
+      password: passwordController.text.trim(),
+    );
+
+    // Now currentUser is available
+    await FirebaseAuth.instance.currentUser?.sendEmailVerification();
+
+    if (!mounted) return;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const VerifyEmailScreen()),
+    );
+  } catch (e) {
+    showSnack(e.toString());
+  } finally {
+    setState(() => loading = false);
+  }
+}
+
 
   void showSnack(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -53,12 +69,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            TextField(controller: usernameController, decoration: const InputDecoration(labelText: 'Username')),
-            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email')),
-            TextField(controller: passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
+            TextField(controller: usernameController, decoration: const InputDecoration(labelText: 'Username', border: OutlineInputBorder())),
             const SizedBox(height: 16),
-            ElevatedButton(onPressed: loading ? null : register, child: const Text('Register')),
+            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+            const SizedBox(height: 16),
+            TextField(controller: passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder())),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: loading ? null : register,
+              style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              child: const Text('Register'),
+            ),
           ],
         ),
       ),

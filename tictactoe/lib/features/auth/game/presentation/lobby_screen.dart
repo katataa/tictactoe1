@@ -31,22 +31,23 @@ class _LobbyScreenState extends State<LobbyScreen> {
         case 'invite_received':
           setState(() => inviteFrom = msg['from']);
           break;
-        case 'invite_accepted':
+        case 'game_start':
+          final String opponent = msg['opponent'];
+          final String gameId = msg['gameId'];
+          final String symbol = msg['symbol'];
+
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => GameBoardScreen(
                 username: widget.username,
-                opponent: inviteFrom!,
-                symbol: 'O', // invited player
-                gameId: 'some-shared-id',
+                opponent: opponent,
+                symbol: symbol,
+                gameId: gameId,
                 socket: _ws,
               ),
             ),
           );
-          break;
-        case 'move':
-          // Handle move updates here (later)
           break;
       }
     };
@@ -112,7 +113,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               );
             },
             icon: Icon(Icons.smart_toy),
-            label: Text('Play vs Bot'),
+            label: const Text('Play vs Bot'),
           ),
         ],
       ),
