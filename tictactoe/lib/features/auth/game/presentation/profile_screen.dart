@@ -34,22 +34,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> saveProfile() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
 
-    setState(() => loading = true);
+  setState(() => loading = true);
 
-    await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+  try {
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
       'username': _usernameController.text.trim(),
       'avatar': selectedAvatar,
-    });
-
-    setState(() => loading = false);
-
+    }, SetOptions(merge: true)); // important!
+    
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Profile updated!')),
     );
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error updating profile: $e')),
+    );
+  } finally {
+    if (mounted) {
+      setState(() => loading = false);
+    }
   }
+}
 
   @override
   Widget build(BuildContext context) {
