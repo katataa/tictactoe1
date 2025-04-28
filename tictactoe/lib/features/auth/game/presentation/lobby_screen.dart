@@ -1,14 +1,14 @@
+// lib/features/game/presentation/lobby_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
-import 'bot_game_screen.dart';
 import '../data/websocket_service.dart';
 import 'game_board_screen.dart';
+import 'bot_game_screen.dart';
 
 class LobbyScreen extends StatefulWidget {
   final String username;
-  const LobbyScreen({super.key, required this.username});
+  const LobbyScreen({Key? key, required this.username}) : super(key: key);
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();
@@ -18,126 +18,172 @@ class _LobbyScreenState extends State<LobbyScreen> {
   final WebSocketService _ws = WebSocketService();
   List<Map<String, dynamic>> allUsers = [];
   List<String> onlineUsers = [];
-  String searchQuery = '';
-
   String avatar = 'avatar1.png';
-  int wins = 0;
-  int losses = 0;
+  int wins = 0, losses = 0;
   String? inviteFrom;
+  int? inviteTimeControl;
   String? invitedUser;
-
+  String? ongoingGameId, ongoingOpponent, ongoingSymbol;
+  int selectedTimeControl = 5;
   final _searchController = TextEditingController();
   bool _loadingSearch = false;
 
   @override
   void initState() {
     super.initState();
-    fetchUserData();
-    _ws.connect(widget.username);
-
-    _ws.onMessage = (msg) {
-      switch (msg['type']) {
-        case 'user_list':
-          final List<String> users = List<String>.from(msg['users']);
-          users.remove(widget.username);
-          setState(() => onlineUsers = users);
-          break;
-        case 'invite_received':
-          setState(() => inviteFrom = msg['from']);
-          break;
-        case 'game_start':
-          final String opponent = msg['opponent'];
-          final String gameId = msg['gameId'];
-          final String symbol = msg['symbol'];
-
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => GameBoardScreen(
-                username: widget.username,
-                opponent: opponent,
-                symbol: symbol,
-                gameId: gameId,
-                socket: _ws,
-              ),
-            ),
-          );
-          break;
-      }
-    };
+    _loadProfile();
+    _ws.connect(widget.username).then((_) => _ws.sendResumeCheck());
+    _ws.onMessage = _handleWsMessage;
   }
 
-  Future<void> fetchUserData() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      final snapshot = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-      final data = snapshot.data();
-      if (data != null) {
+  void _handleWsMessage(Map<String, dynamic> msg) {
+    switch (msg['type']) {
+      case 'user_list':
+        final list = List<String>.from(msg['users'] as List);
+        list.remove(widget.username);
+        setState(() => onlineUsers = list);
+        break;
+
+      case 'invite_received':
         setState(() {
-          avatar = data['avatar'] ?? 'avatar1.png';
-          wins = data['wins'] ?? 0;
-          losses = data['losses'] ?? 0;
+          inviteFrom = msg['from'] as String?;
+          inviteTimeControl = msg['timeControl'] as int? ?? selectedTimeControl;
         });
-      }
+        break;
+
+      case 'game_start':
+        _launchGame(
+          opponent: msg['opponent'] as String,
+          symbol: msg['symbol'] as String,
+          gameId: msg['gameId'] as String,
+          board: List<String>.filled(9, ''),    // fresh game
+          nextTurn: 'X',
+          timeControl: msg['timeControl'] as int? ?? selectedTimeControl,
+        );
+        break;
+
+      case 'resume_game':
+        _launchGame(
+          opponent: msg['opponent'] as String,
+          symbol: msg['symbol'] as String,
+          gameId: msg['gameId'] as String,
+          board: List<String>.from(msg['board'] as List),
+          nextTurn: msg['nextTurn'] as String,
+          timeControl: msg['timeControl'] as int,
+        );
+        break;
     }
   }
 
-  Future<void> searchUsers(String query) async {
-    if (query.isEmpty) {
+  Future<void> _loadProfile() async {
+    final u = FirebaseAuth.instance.currentUser;
+    if (u == null) return;
+    final doc = await FirebaseFirestore.instance.collection('users').doc(u.uid).get();
+    final d = doc.data();
+    if (d != null) {
+      setState(() {
+        avatar = d['avatar'] as String? ?? avatar;
+        wins = d['wins'] as int? ?? wins;
+        losses = d['losses'] as int? ?? losses;
+      });
+    }
+  }
+
+  Future<void> _searchUsers(String q) async {
+    if (q.isEmpty) {
       setState(() => allUsers.clear());
       return;
     }
-
     setState(() => _loadingSearch = true);
-
-    final snapshot = await FirebaseFirestore.instance
+    var snap = await FirebaseFirestore.instance
         .collection('users')
-        .where('username', isEqualTo: query)
+        .where('username', isEqualTo: q)
         .get();
-
-    if (snapshot.docs.isEmpty) {
-      final emailSnapshot = await FirebaseFirestore.instance
+    if (snap.docs.isEmpty) {
+      snap = await FirebaseFirestore.instance
           .collection('users')
-          .where('email', isEqualTo: query)
+          .where('email', isEqualTo: q)
           .get();
-
-      setState(() {
-        allUsers = emailSnapshot.docs.map((doc) => {
-          'username': doc.data()['username'] ?? '',
-          'email': doc.data()['email'] ?? '',
-        }).toList();
-      });
-    } else {
-      setState(() {
-        allUsers = snapshot.docs.map((doc) => {
-          'username': doc.data()['username'] ?? '',
-          'email': doc.data()['email'] ?? '',
-        }).toList();
-      });
     }
-
-    setState(() => _loadingSearch = false);
+    setState(() {
+      allUsers = snap.docs
+          .map((d) => {
+                'username': d.data()['username'] as String? ?? '',
+                'email': d.data()['email'] as String? ?? '',
+              })
+          .toList();
+      _loadingSearch = false;
+    });
   }
 
-  void sendInvite(String to) {
-    _ws.sendInvite(to);
+  void _launchGame({
+    required String opponent,
+    required String symbol,
+    required String gameId,
+    required List<String> board,
+    required String nextTurn,
+    required int timeControl,
+  }) {
+    // clear any pending invites
+    setState(() {
+      invitedUser = null;
+      inviteFrom = null;
+      inviteTimeControl = null;
+      ongoingGameId = gameId;
+      ongoingOpponent = opponent;
+      ongoingSymbol = symbol;
+      selectedTimeControl = timeControl;
+    });
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GameBoardScreen(
+          username: widget.username,
+          opponent: opponent,
+          symbol: symbol,
+          gameId: gameId,
+          socket: _ws,
+          timeControl: Duration(minutes: timeControl),
+        ),
+      ),
+    ).then((_) => _loadProfile());
+  }
+
+  void _sendInvite(String to) {
+    if (!_ws.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Not connected. Please rejoin lobby.")),
+      );
+      return;
+    }
+    _ws.sendInvite(to, selectedTimeControl);
     setState(() => invitedUser = to);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Invite sent to $to")),
+      SnackBar(content: Text("Invite sent to $to (${selectedTimeControl}m)")),
     );
   }
 
-  void cancelInvite() {
+  void _acceptInvite() {
+    if (inviteFrom != null && inviteTimeControl != null) {
+      _ws.acceptInvite(inviteFrom!, inviteTimeControl!);
+      setState(() {
+        inviteFrom = null;
+        inviteTimeControl = null;
+      });
+    }
+  }
+
+  void _cancelInvite() {
     setState(() => invitedUser = null);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Invite cancelled.")),
     );
   }
 
-  void acceptInvite() {
-    if (inviteFrom != null) {
-      _ws.acceptInvite(inviteFrom!);
-      setState(() => inviteFrom = null);
+  void _returnToGame() {
+    if (ongoingGameId != null) {
+      _ws.sendResumeCheck();
     }
   }
 
@@ -149,10 +195,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final showingSearchResults = searchQuery.isNotEmpty;
-
-    final usersToShow = showingSearchResults
+  Widget build(BuildContext c) {
+    final isSearch = _searchController.text.isNotEmpty;
+    final list = isSearch
         ? allUsers.map((u) => u['username'] as String).toList()
         : onlineUsers;
 
@@ -161,7 +206,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
       body: Column(
         children: [
           const SizedBox(height: 16),
-          // --- My Profile Card ---
           Card(
             margin: const EdgeInsets.symmetric(horizontal: 16),
             child: ListTile(
@@ -173,23 +217,43 @@ class _LobbyScreenState extends State<LobbyScreen> {
               subtitle: Text('Wins: $wins | Losses: $losses'),
             ),
           ),
-          const SizedBox(height: 16),
-          if (inviteFrom != null)
-            AlertDialog(
-              title: const Text('Game Invite'),
-              content: Text('$inviteFrom invited you to play!'),
-              actions: [
-                TextButton(
-                  onPressed: acceptInvite,
-                  child: const Text('Accept'),
-                ),
-                TextButton(
-                  onPressed: () => setState(() => inviteFrom = null),
-                  child: const Text('Decline'),
+
+          // time control dropdown
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                const Text('Time Control:'),
+                const SizedBox(width: 8),
+                DropdownButton<int>(
+                  value: selectedTimeControl,
+                  items: [5, 10, 15].map((m) => DropdownMenuItem(value: m, child: Text('$m min'))).toList(),
+                  onChanged: (m) {
+                    if (m != null) setState(() => selectedTimeControl = m);
+                  },
                 ),
               ],
             ),
-          // --- Search Bar ---
+          ),
+
+          // return to game
+          if (ongoingGameId != null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: ElevatedButton(onPressed: _returnToGame, child: const Text('Return to Game')),
+            ),
+
+          // incoming invite dialog
+          if (inviteFrom != null)
+            AlertDialog(
+              title: const Text('Game Invite'),
+              content: Text('$inviteFrom wants to play (${inviteTimeControl}m)'),
+              actions: [
+                TextButton(onPressed: _acceptInvite, child: const Text('Accept')),
+                TextButton(onPressed: () => setState(() => inviteFrom = null), child: const Text('Decline')),
+              ],
+            ),
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
@@ -199,12 +263,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 prefixIcon: Icon(Icons.search),
                 border: OutlineInputBorder(),
               ),
-              onChanged: (value) {
-                setState(() => searchQuery = value.trim());
-                searchUsers(value.trim());
-              },
+              onChanged: (v) => _searchUsers(v.trim()),
             ),
           ),
+
           const SizedBox(height: 16),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 16),
@@ -213,48 +275,40 @@ class _LobbyScreenState extends State<LobbyScreen> {
               child: Text('Players', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ),
           ),
+
           Expanded(
             child: _loadingSearch
                 ? const Center(child: CircularProgressIndicator())
-                : usersToShow.isEmpty
+                : list.isEmpty
                     ? const Center(child: Text('No players found.'))
                     : ListView.builder(
-                        itemCount: usersToShow.length,
-                        itemBuilder: (_, index) {
-                          final username = usersToShow[index];
-                          final isOnline = onlineUsers.contains(username);
-
+                        itemCount: list.length,
+                        itemBuilder: (_, i) {
+                          final user = list[i];
+                          final online = onlineUsers.contains(user);
                           return ListTile(
-                            leading: Icon(
-                              Icons.circle,
-                              color: isOnline ? Colors.green : Colors.grey,
-                              size: 12,
-                            ),
-                            title: Text(username),
-                            trailing: isOnline
-                                ? invitedUser == username
+                            leading: Icon(Icons.circle, color: online ? Colors.green : Colors.grey, size: 12),
+                            title: Text(user),
+                            trailing: online
+                                ? (invitedUser == user
                                     ? ElevatedButton(
-                                        onPressed: cancelInvite,
+                                        onPressed: _cancelInvite,
                                         style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
                                         child: const Text('Cancel'),
                                       )
                                     : ElevatedButton(
-                                        onPressed: () => sendInvite(username),
+                                        onPressed: () => _sendInvite(user),
                                         child: const Text('Invite'),
-                                      )
+                                      ))
                                 : const Text('Offline', style: TextStyle(color: Colors.grey)),
                           );
                         },
                       ),
           ),
+
           const SizedBox(height: 16),
           ElevatedButton.icon(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const BotGameScreen()),
-              );
-            },
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BotGameScreen())),
             icon: const Icon(Icons.smart_toy),
             label: const Text('Play vs Bot'),
           ),

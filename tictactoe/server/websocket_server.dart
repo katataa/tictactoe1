@@ -1,3 +1,4 @@
+// websocket_server.dart
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -7,20 +8,28 @@ class Player {
   final WebSocket socket;
   String? username;
   String? inGameWith;
+  bool isInGame = false;
+  DateTime lastPing = DateTime.now();
+  int? pendingInviteTimeControl;
 
   Player(this.id, this.socket);
 }
 
 class GameSession {
-  String playerX;
-  String playerO;
+  final String playerX;
+  final String playerO;
+  final int timeControlMinutes;
   List<String> board = List.filled(9, '');
   String currentTurn = 'X';
   bool isGameOver = false;
   String? winner;
   DateTime lastActivity = DateTime.now();
 
-  GameSession({required this.playerX, required this.playerO});
+  GameSession({
+    required this.playerX,
+    required this.playerO,
+    required this.timeControlMinutes,
+  });
 }
 
 final players = <String, Player>{};
@@ -30,15 +39,15 @@ void main() async {
   final server = await HttpServer.bind(InternetAddress.anyIPv4, 8080);
   print('✅ WebSocket Server running on ws://${server.address.address}:8080');
 
-  Timer.periodic(Duration(seconds: 10), (_) => checkDisconnects());
+  // Clean up ghost connections
+  Timer.periodic(const Duration(seconds: 10), (_) => checkDisconnects());
 
-  await for (HttpRequest request in server) {
-    if (WebSocketTransformer.isUpgradeRequest(request)) {
-      final socket = await WebSocketTransformer.upgrade(request);
+  await for (HttpRequest req in server) {
+    if (WebSocketTransformer.isUpgradeRequest(req)) {
+      final socket = await WebSocketTransformer.upgrade(req);
       final id = DateTime.now().millisecondsSinceEpoch.toString();
       final player = Player(id, socket);
       players[id] = player;
-
       print('🔌 Player connected: $id');
 
       socket.listen(
@@ -47,89 +56,129 @@ void main() async {
         onError: (_) => handleDisconnect(player),
       );
     } else {
-      request.response..statusCode = HttpStatus.forbidden..close();
+      req.response
+        ..statusCode = HttpStatus.forbidden
+        ..close();
     }
   }
 }
 
 void handleMessage(Player player, dynamic data) {
-  final decoded = jsonDecode(data);
-  final type = decoded['type'];
+  final msg = jsonDecode(data as String) as Map<String, dynamic>;
+  final type = msg['type'] as String? ?? '';
 
   switch (type) {
+    // initial or re-connect handshake
     case 'set_username':
-      player.username = decoded['username'];
+      final requestedId = msg['playerId'] as String?;
+      if (requestedId != null && players.containsKey(requestedId)) {
+        // re-attach to old socket
+        final old = players.remove(requestedId)!;
+        player.username = old.username;
+        player.inGameWith = old.inGameWith;
+        player.isInGame = old.isInGame;
+        print('♻️ Player reconnected with ID $requestedId');
+      } else {
+        player.username = msg['username'] as String?;
+      }
+      players[player.id] = player;
+      // tell client their (new or restored) id
+      player.socket.add(jsonEncode({'type': 'set_id', 'id': player.id}));
       broadcastOnlineUsers();
       break;
 
-    case 'invite':
-      final toUsername = decoded['to'];
-      final toPlayer = players.values.firstWhereOrNull((p) => p.username == toUsername);
-      if (toPlayer != null) {
-        player.inGameWith = toPlayer.id;
-        toPlayer.inGameWith = player.id;
+    // client wants to resume an in-flight game
+    case 'check_resume':
+      _handleResume(player);
+      break;
 
-        toPlayer.socket.add(jsonEncode({
+    // sending an invite (with timeControl)
+    case 'invite':
+      final to = msg['to'] as String?;
+      final tc = msg['timeControl'] as int? ?? 5;
+      player.pendingInviteTimeControl = tc;
+      final target = players.values
+          .firstWhereOrNull((p) => p.username == to);
+      if (target != null) {
+        player.inGameWith = target.id;
+        target.inGameWith = player.id;
+        target.socket.add(jsonEncode({
           'type': 'invite_received',
           'from': player.username,
+          'timeControl': tc,
         }));
       }
       break;
 
+    // accept invite (includes agreed timeControl)
     case 'accept_invite':
-      final fromPlayer = players.values.firstWhereOrNull((p) => p.username == decoded['from']);
-      if (fromPlayer != null) {
-        final gameId = '${fromPlayer.id}-${player.id}';
-        final session = GameSession(playerX: fromPlayer.id, playerO: player.id);
-        activeGames[gameId] = session;
+      final fromName = msg['from'] as String?;
+      final tc = msg['timeControl'] as int? 
+          ?? player.pendingInviteTimeControl 
+          ?? 5;
+      final inviter = players.values
+          .firstWhereOrNull((p) => p.username == fromName);
+      if (inviter != null) {
+        final gameId = '${inviter.id}-${player.id}';
+        final sess = GameSession(
+          playerX: inviter.id,
+          playerO: player.id,
+          timeControlMinutes: tc,
+        );
+        activeGames[gameId] = sess;
+        inviter.isInGame = true;
+        player.isInGame = true;
 
-        fromPlayer.socket.add(jsonEncode({
-          'type': 'invite_accepted',
-          'by': player.username,
-          'gameId': gameId,
-        }));
-
-        player.socket.add(jsonEncode({
-          'type': 'game_start',
-          'opponent': fromPlayer.username,
-          'symbol': 'O',
-          'gameId': gameId,
-        }));
-
-        fromPlayer.socket.add(jsonEncode({
+        // notify both clients of game start, including timeControl
+        inviter.socket.add(jsonEncode({
           'type': 'game_start',
           'opponent': player.username,
           'symbol': 'X',
           'gameId': gameId,
+          'timeControl': tc,
         }));
+        player.socket.add(jsonEncode({
+          'type': 'game_start',
+          'opponent': inviter.username,
+          'symbol': 'O',
+          'gameId': gameId,
+          'timeControl': tc,
+        }));
+        broadcastOnlineUsers();
       }
       break;
 
+    case 'ping':
+      player.lastPing = DateTime.now();
+      break;
+
     case 'move':
-      final gameId = decoded['gameId'];
-      final cell = decoded['cell'];
+      final gameId = msg['gameId'] as String?;
+      final cell = msg['cell'] as int?;
       final session = activeGames[gameId];
+      if (session == null || session.isGameOver || cell == null) return;
 
-      if (session == null || session.isGameOver) return;
+      final sym =
+          (session.playerX == player.id) ? 'X' : 'O';
+      if (session.currentTurn != sym ||
+          session.board[cell] != '') return;
 
-      final symbol = session.playerX == player.id ? 'X' : 'O';
-      if (session.currentTurn != symbol || session.board[cell] != '') return;
-
-      session.board[cell] = symbol;
-      session.currentTurn = symbol == 'X' ? 'O' : 'X';
+      session.board[cell] = sym;
+      session.currentTurn = (sym == 'X') ? 'O' : 'X';
       session.lastActivity = DateTime.now();
 
-      final winner = checkWinner(session.board);
-      if (winner != null) {
+      final win = checkWinner(session.board);
+      if (win != null) {
         session.isGameOver = true;
-        session.winner = winner;
+        session.winner = win;
       }
 
-      for (var p in [session.playerX, session.playerO]) {
-        players[p]?.socket.add(jsonEncode({
+      // broadcast updated state
+      for (var pid in [session.playerX, session.playerO]) {
+        players[pid]?.socket.add(jsonEncode({
           'type': 'move',
           'cell': cell,
-          'by': symbol,
+          'by': sym,
           'board': session.board,
           'nextTurn': session.currentTurn,
           'winner': session.winner,
@@ -138,33 +187,38 @@ void handleMessage(Player player, dynamic data) {
       break;
 
     case 'restart_request':
-      final gameId = decoded['gameId'];
+      final gameId = msg['gameId'] as String?;
       final session = activeGames[gameId];
       if (session != null) {
-        for (var p in [session.playerX, session.playerO]) {
-          players[p]?.socket.add(jsonEncode({
-            'type': 'restart_prompt',
-            'gameId': gameId,
-            'expiresAt': DateTime.now().add(Duration(seconds: 30)).toIso8601String(),
-          }));
-        }
+        final other = (session.playerX == player.id)
+            ? session.playerO
+            : session.playerX;
+        players[other]?.socket.add(jsonEncode({
+          'type': 'restart_prompt',
+          'gameId': gameId,
+          'expiresAt': DateTime.now()
+              .add(const Duration(seconds: 30))
+              .toIso8601String(),
+        }));
       }
       break;
 
     case 'restart_accept':
-      final gameId = decoded['gameId'];
+      final gameId = msg['gameId'] as String?;
       final session = activeGames[gameId];
       if (session != null) {
         session.board = List.filled(9, '');
         session.currentTurn = 'X';
         session.isGameOver = false;
         session.winner = null;
+        session.lastActivity = DateTime.now();
 
-        for (var p in [session.playerX, session.playerO]) {
-          players[p]?.socket.add(jsonEncode({
+        for (var pid in [session.playerX, session.playerO]) {
+          players[pid]?.socket.add(jsonEncode({
             'type': 'restart_confirmed',
             'board': session.board,
             'gameId': gameId,
+            'timeControl': session.timeControlMinutes,
           }));
         }
       }
@@ -172,29 +226,65 @@ void handleMessage(Player player, dynamic data) {
   }
 }
 
-void handleDisconnect(Player player) {
-  print('❌ Player disconnected: ${player.id}');
-  players.remove(player.id);
+void _handleResume(Player player) {
+  final entry = activeGames.entries.firstWhereOrNull(
+    (e) =>
+        (e.value.playerX == player.id ||
+         e.value.playerO == player.id) &&
+        !e.value.isGameOver,
+  );
+  if (entry != null) {
+    final sid = entry.key;
+    final s = entry.value;
+    final opp = (s.playerX == player.id)
+        ? s.playerO
+        : s.playerX;
+    final sym = (s.playerX == player.id) ? 'X' : 'O';
+
+    player.socket.add(jsonEncode({
+      'type': 'resume_game',
+      'opponent': players[opp]?.username,
+      'symbol': sym,
+      'gameId': sid,
+      'board': s.board,
+      'nextTurn': s.currentTurn,
+      'timeControl': s.timeControlMinutes,
+    }));
+  }
+}
+
+void handleDisconnect(Player p) {
+  print('❌ Player disconnected: ${p.id}');
+  if (p.inGameWith != null) {
+    players[p.inGameWith!]?.socket.add(jsonEncode({
+      'type': 'player_left',
+    }));
+  }
+  players.remove(p.id);
   broadcastOnlineUsers();
 }
 
 void broadcastOnlineUsers() {
-  final userList = players.values.where((p) => p.username != null).map((p) => p.username!).toList();
-  for (final p in players.values) {
-    p.socket.add(jsonEncode({'type': 'user_list', 'users': userList}));
+  final list = players.values
+      .where((p) => p.username != null && !p.isInGame)
+      .map((p) => p.username!)
+      .toList();
+  for (var p in players.values) {
+    p.socket.add(jsonEncode({'type': 'user_list', 'users': list}));
   }
 }
 
 String? checkWinner(List<String> b) {
-  final wins = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
+  const wins = [
+    [0,1,2],[3,4,5],[6,7,8],
+    [0,3,6],[1,4,7],[2,5,8],
+    [0,4,8],[2,4,6],
   ];
-  for (var combo in wins) {
-    final a = combo[0], b1 = combo[1], c = combo[2];
-    if (b[a] != '' && b[a] == b[b1] && b[a] == b[c]) {
-      return b[a];
+  for (var w in wins) {
+    if (b[w[0]] != '' &&
+        b[w[0]] == b[w[1]] &&
+        b[w[0]] == b[w[2]]) {
+      return b[w[0]];
     }
   }
   if (!b.contains('')) return 'draw';
@@ -203,26 +293,16 @@ String? checkWinner(List<String> b) {
 
 void checkDisconnects() {
   final now = DateTime.now();
-  activeGames.forEach((id, session) {
-    if (!session.isGameOver && now.difference(session.lastActivity).inMinutes >= 2) {
-      session.isGameOver = true;
-      session.winner = session.currentTurn == 'X' ? 'O' : 'X';
-
-      for (var p in [session.playerX, session.playerO]) {
-        players[p]?.socket.add(jsonEncode({
-          'type': 'disconnect_timeout',
-          'winner': session.winner,
-        }));
-      }
-    }
-  });
+  final stale = players.values
+      .where((p) => now.difference(p.lastPing).inSeconds > 60)
+      .toList();
+  for (var p in stale) handleDisconnect(p);
 }
 
-// 🔧 Safe null helper
 extension IterableExtension<E> on Iterable<E> {
   E? firstWhereOrNull(bool Function(E) test) {
-    for (var element in this) {
-      if (test(element)) return element;
+    for (var e in this) {
+      if (test(e)) return e;
     }
     return null;
   }
