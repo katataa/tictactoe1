@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../auth/presentation/verify_email_screen.dart';
 import '../game/presentation/lobby_screen.dart';
 import '../game/presentation/profile_screen.dart';
+import '../game/data/websocket_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -42,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
           TextButton(
             onPressed: () async {
               Navigator.pop(ctx);
+              WebSocketService().disconnect();
               await FirebaseAuth.instance.signOut();
               if (!mounted) return;
               Navigator.pushReplacementNamed(context, '/login');

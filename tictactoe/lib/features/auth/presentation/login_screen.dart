@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/home/home_screen.dart';
@@ -19,20 +20,39 @@ class _LoginScreenState extends State<LoginScreen> {
   bool loading = false;
 
   void login() async {
-    setState(() => loading = true);
-    try {
-      final user = await _authRepo.signIn(emailController.text, passwordController.text);
-      if (user != null && _authRepo.isEmailVerified()) {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomeScreen()));
-      } else {
-        showSnack("Please verify your email before logging in.");
-      }
-    } catch (e) {
-      showSnack(e.toString());
-    } finally {
-      setState(() => loading = false);
+  setState(() => loading = true);
+  try {
+    final user = await _authRepo.signIn(emailController.text, passwordController.text);
+    if (user != null && _authRepo.isEmailVerified()) {
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomeScreen()));
+    } else {
+      showSnack("Please verify your email before logging in.");
     }
+  } on FirebaseAuthException catch (e) {
+  switch (e.code) {
+    case 'user-not-found':
+      showSnack("No account found for that email.");
+      break;
+    case 'wrong-password':
+      showSnack("Incorrect password.");
+      break;
+    case 'invalid-email':
+      showSnack("That email address is not valid.");
+      break;
+    case 'too-many-requests':
+      showSnack("Too many attempts. Try again later.");
+      break;
+    default:
+      showSnack("Login failed: ${e.message ?? 'Unknown error'}");
   }
+} catch (e) {
+  showSnack("Something went wrong. Please check your internet and try again.");
+}
+ finally {
+    setState(() => loading = false);
+  }
+}
+
 
   void showSnack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));

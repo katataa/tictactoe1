@@ -14,10 +14,6 @@ class GameBoardScreen extends StatefulWidget {
   final WebSocketService socket;
   final Duration timeControl;
 
-  // ← NEW: optional resume parameters
-  final List<String>? initialBoard;
-  final String? initialNextTurn;
-
   const GameBoardScreen({
     Key? key,
     required this.username,
@@ -26,8 +22,6 @@ class GameBoardScreen extends StatefulWidget {
     required this.gameId,
     required this.socket,
     this.timeControl = const Duration(minutes: 5),
-    this.initialBoard,
-    this.initialNextTurn,
   }) : super(key: key);
 
   @override
@@ -57,15 +51,14 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   void initState() {
     super.initState();
 
-    // JOIN GAME
-    widget.socket.joinGame(widget.gameId, widget.symbol);
+    widget.socket.joinGame(widget.gameId, widget.symbol); // ✅ passes both
 
-    // INITIALIZE BOARD & TURN (resume vs fresh)
-    board = widget.initialBoard ?? List.filled(9, '');
-    currentTurn = widget.initialNextTurn ?? 'X';
+
+
+    board = List.filled(9, '');
+    currentTurn = 'X';
     isMyTurn = (widget.symbol == currentTurn);
 
-    // TIMERS
     myTime = widget.timeControl;
     opponentTime = widget.timeControl;
 
@@ -78,6 +71,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
         }
       }
     });
+
     opponentTicker = Ticker((_) {
       if (!gameEnded && !isMyTurn && mounted && !opponentDisconnected) {
         if (opponentTime.inSeconds > 0) {
@@ -88,10 +82,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
       }
     });
 
-    // SOCKET HANDLER
     widget.socket.onMessage = _handleMessage;
 
-    // START TICKERS
     myTicker.start();
     opponentTicker.start();
   }
@@ -126,8 +118,33 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
         break;
 
       case 'player_left':
-        if (!gameEnded) _handlePlayerLeft();
-        break;
+  if (!gameEnded) {
+    if (msg['voluntary'] == true) {
+      _endGame(lost: false); // you win
+      _persistStats();
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          title: const Text('Opponent Left'),
+          content: const Text('Your opponent left the match. You win!'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop();
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      _handlePlayerLeft(); // fallback disconnect countdown
+    }
+  }
+  break;
+
 
       case 'disconnect_timeout':
         if (!gameEnded) _showDisconnectedDialog();
@@ -141,7 +158,6 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     final usersRef = FirebaseFirestore.instance.collection('users');
     final meDoc = usersRef.doc(me.uid);
 
-    // find opponent
     final q = await usersRef
         .where('username', isEqualTo: widget.opponent)
         .limit(1)
@@ -215,8 +231,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
 
     restartTimer = Timer(const Duration(seconds: 30), () {
       if (mounted) {
-        Navigator.of(context).pop(); // close dialog
-        Navigator.of(context).pop(); // back to lobby
+        Navigator.of(context).pop();
+        Navigator.of(context).pop();
       }
     });
   }
@@ -241,19 +257,35 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   }
 
   void _handlePlayerLeft() {
-    setState(() {
-      opponentDisconnected = true;
-      disconnectSecondsLeft = 120;
-    });
-    disconnectTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (disconnectSecondsLeft == 0) {
-        t.cancel();
-        _showDisconnectedDialog();
-      } else {
-        setState(() => disconnectSecondsLeft--);
-      }
-    });
-  }
+  if (gameEnded) return;
+
+  setState(() {
+    winner = widget.symbol; // you win!
+    gameEnded = true;
+    opponentDisconnected = false; // not a network issue
+  });
+
+  _persistStats(); // record win
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => AlertDialog(
+      title: const Text('Opponent Left'),
+      content: const Text('Your opponent left the game. You win!'),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.of(context).pop(); // close dialog
+            Navigator.of(context).pop(); // back to lobby
+          },
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
+
 
   void _showDisconnectedDialog() {
     _persistStats();
@@ -277,30 +309,32 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   }
 
   void _confirmBack() {
-    if (gameEnded) {
-      widget.socket.disconnect();
-      Navigator.of(context).pop();
-      return;
-    }
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Leave Game?'),
-        content: const Text('Are you sure? You will forfeit this match.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () {
-              widget.socket.disconnect();
-              Navigator.of(context).pop();
-              Navigator.of(context).pop();
-            },
-            child: const Text('Leave'),
-          ),
-        ],
-      ),
-    );
+  if (gameEnded) {
+    widget.socket.leaveGame();
+    Navigator.of(context).pop();
+    return;
   }
+
+  showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Leave Game?'),
+      content: const Text('Are you sure? You will forfeit this match.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () {
+            widget.socket.leaveGame();
+            Navigator.of(context).pop();
+            Navigator.of(context).pop();
+          },
+          child: const Text('Leave'),
+        ),
+      ],
+    ),
+  );
+}
+
 
   @override
   void dispose() {
@@ -308,7 +342,6 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     opponentTicker.dispose();
     restartTimer?.cancel();
     disconnectTimer?.cancel();
-    widget.socket.disconnect();
     super.dispose();
   }
 

@@ -87,12 +87,28 @@ void handleMessage(Player player, dynamic data) {
       broadcastOnlineUsers();
       break;
 
-    // client wants to resume an in-flight game
-    case 'check_resume':
-      _handleResume(player);
-      break;
+case 'leave_game':
+  final gameId = msg['gameId'] as String?;
+  final session = activeGames[gameId];
+  if (session != null) {
+    final other = (session.playerX == player.id) ? session.playerO : session.playerX;
 
-    // sending an invite (with timeControl)
+    // Notify the opponent that the player left voluntarily
+    players[other]?.socket.add(jsonEncode({
+      'type': 'player_left',
+      'voluntary': true,
+    }));
+
+    players[other]?.inGameWith = null;
+    players[other]?.isInGame = false;
+
+    activeGames.remove(gameId);
+  }
+
+  player.inGameWith = null;
+  player.isInGame = false;
+  break;
+
     case 'invite':
       final to = msg['to'] as String?;
       final tc = msg['timeControl'] as int? ?? 5;
@@ -186,6 +202,22 @@ void handleMessage(Player player, dynamic data) {
       }
       break;
 
+      case 'join_game':
+  final gameId = msg['gameId'] as String?;
+  if (gameId != null && activeGames.containsKey(gameId)) {
+    final session = activeGames[gameId]!;
+    if (session.playerX == player.id) {
+      player.inGameWith = session.playerO;
+      player.isInGame = true;
+    } else if (session.playerO == player.id) {
+      player.inGameWith = session.playerX;
+      player.isInGame = true;
+    }
+    print('🔁 Player ${player.id} joined game $gameId');
+  }
+  break;
+
+
     case 'restart_request':
       final gameId = msg['gameId'] as String?;
       final session = activeGames[gameId];
@@ -226,43 +258,42 @@ void handleMessage(Player player, dynamic data) {
   }
 }
 
-void _handleResume(Player player) {
-  final entry = activeGames.entries.firstWhereOrNull(
-    (e) =>
-        (e.value.playerX == player.id ||
-         e.value.playerO == player.id) &&
-        !e.value.isGameOver,
-  );
-  if (entry != null) {
-    final sid = entry.key;
-    final s = entry.value;
-    final opp = (s.playerX == player.id)
-        ? s.playerO
-        : s.playerX;
-    final sym = (s.playerX == player.id) ? 'X' : 'O';
 
-    player.socket.add(jsonEncode({
-      'type': 'resume_game',
-      'opponent': players[opp]?.username,
-      'symbol': sym,
-      'gameId': sid,
-      'board': s.board,
-      'nextTurn': s.currentTurn,
-      'timeControl': s.timeControlMinutes,
-    }));
-  }
-}
 
 void handleDisconnect(Player p) {
   print('❌ Player disconnected: ${p.id}');
   if (p.inGameWith != null) {
-    players[p.inGameWith!]?.socket.add(jsonEncode({
-      'type': 'player_left',
-    }));
+    final otherId = p.inGameWith!;
+    final session = activeGames.entries.firstWhereOrNull(
+      (e) => e.value.playerX == p.id || e.value.playerO == p.id,
+    );
+
+    if (session != null && !session.value.isGameOver) {
+      session.value.isGameOver = true;
+      session.value.winner = otherId == session.value.playerX ? 'X' : 'O';
+
+      players[otherId]?.socket.add(jsonEncode({
+        'type': 'move',
+        'cell': null,
+        'by': null,
+        'board': session.value.board,
+        'nextTurn': null,
+        'winner': session.value.winner,
+      }));
+
+      activeGames.remove(session.key);
+    } else {
+      players[otherId]?.socket.add(jsonEncode({'type': 'player_left'}));
+    }
+
+    players[otherId]?.inGameWith = null;
+    players[otherId]?.isInGame = false;
   }
+
   players.remove(p.id);
   broadcastOnlineUsers();
 }
+
 
 void broadcastOnlineUsers() {
   final list = players.values

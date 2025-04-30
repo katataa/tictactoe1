@@ -19,7 +19,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool loading = false;
 
- void register() async {
+void register() async {
   final passwordError = validatePassword(passwordController.text);
   if (passwordError != null) {
     showSnack(passwordError);
@@ -28,20 +28,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   setState(() => loading = true);
   try {
-    // Register user
     await _authRepo.signUp(
       emailController.text,
       passwordController.text,
       usernameController.text,
     );
 
-    // ✅ Now sign in manually after registration
     await FirebaseAuth.instance.signInWithEmailAndPassword(
       email: emailController.text.trim(),
       password: passwordController.text.trim(),
     );
 
-    // Now currentUser is available
     await FirebaseAuth.instance.currentUser?.sendEmailVerification();
 
     if (!mounted) return;
@@ -50,13 +47,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context,
       MaterialPageRoute(builder: (_) => const VerifyEmailScreen()),
     );
+  } on FirebaseAuthException catch (e) {
+    switch (e.code) {
+      case 'email-already-in-use':
+        showSnack("That email is already registered.");
+        break;
+      case 'invalid-email':
+        showSnack("Please enter a valid email address.");
+        break;
+      case 'weak-password':
+        showSnack("Password should be at least 6 characters.");
+        break;
+      default:
+        showSnack("Registration failed: ${e.message}");
+    }
   } catch (e) {
-    showSnack(e.toString());
+    showSnack("Something went wrong during registration.");
   } finally {
     setState(() => loading = false);
   }
 }
-
 
   void showSnack(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));

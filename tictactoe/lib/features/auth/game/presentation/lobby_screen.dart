@@ -1,4 +1,3 @@
-// lib/features/game/presentation/lobby_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -23,7 +22,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
   String? inviteFrom;
   int? inviteTimeControl;
   String? invitedUser;
-  String? ongoingGameId, ongoingOpponent, ongoingSymbol;
   int selectedTimeControl = 5;
   final _searchController = TextEditingController();
   bool _loadingSearch = false;
@@ -32,8 +30,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void initState() {
     super.initState();
     _loadProfile();
-    _ws.connect(widget.username).then((_) => _ws.sendResumeCheck());
-    _ws.onMessage = _handleWsMessage;
+   _ws.reconnectToLobby(widget.username).then((_) {
+  _ws.onMessage = _handleWsMessage;
+});
+
   }
 
   void _handleWsMessage(Map<String, dynamic> msg) {
@@ -56,20 +56,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           opponent: msg['opponent'] as String,
           symbol: msg['symbol'] as String,
           gameId: msg['gameId'] as String,
-          board: List<String>.filled(9, ''),    // fresh game
-          nextTurn: 'X',
           timeControl: msg['timeControl'] as int? ?? selectedTimeControl,
-        );
-        break;
-
-      case 'resume_game':
-        _launchGame(
-          opponent: msg['opponent'] as String,
-          symbol: msg['symbol'] as String,
-          gameId: msg['gameId'] as String,
-          board: List<String>.from(msg['board'] as List),
-          nextTurn: msg['nextTurn'] as String,
-          timeControl: msg['timeControl'] as int,
         );
         break;
     }
@@ -89,66 +76,65 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
-  Future<void> _searchUsers(String q) async {
-    if (q.isEmpty) {
-      setState(() => allUsers.clear());
-      return;
-    }
-    setState(() => _loadingSearch = true);
-    var snap = await FirebaseFirestore.instance
-        .collection('users')
-        .where('username', isEqualTo: q)
-        .get();
-    if (snap.docs.isEmpty) {
-      snap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('email', isEqualTo: q)
-          .get();
-    }
-    setState(() {
-      allUsers = snap.docs
-          .map((d) => {
-                'username': d.data()['username'] as String? ?? '',
-                'email': d.data()['email'] as String? ?? '',
-              })
-          .toList();
-      _loadingSearch = false;
-    });
+  Future<void> _searchUsers(String query) async {
+  if (query.isEmpty) {
+    setState(() => allUsers.clear());
+    return;
   }
+
+  setState(() => _loadingSearch = true);
+  try {
+    final snap = await FirebaseFirestore.instance
+        .collection('users')
+        .orderBy('username')
+        .startAt([query])
+        .endAt([query + '\uf8ff'])
+        .get();
+
+    setState(() {
+      allUsers = snap.docs.map((d) => {
+        'username': d['username'],
+        'email': d['email'],
+      }).toList();
+    });
+  } catch (_) {
+    setState(() => allUsers.clear());
+  } finally {
+    setState(() => _loadingSearch = false);
+  }
+}
+
 
   void _launchGame({
     required String opponent,
     required String symbol,
     required String gameId,
-    required List<String> board,
-    required String nextTurn,
     required int timeControl,
   }) {
-    // clear any pending invites
     setState(() {
       invitedUser = null;
       inviteFrom = null;
       inviteTimeControl = null;
-      ongoingGameId = gameId;
-      ongoingOpponent = opponent;
-      ongoingSymbol = symbol;
-      selectedTimeControl = timeControl;
     });
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => GameBoardScreen(
-          username: widget.username,
-          opponent: opponent,
-          symbol: symbol,
-          gameId: gameId,
-          socket: _ws,
-          timeControl: Duration(minutes: timeControl),
-        ),
-      ),
-    ).then((_) => _loadProfile());
-  }
+   Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (_) => GameBoardScreen(
+      username: widget.username,
+      opponent: opponent,
+      symbol: symbol,
+      gameId: gameId,
+      socket: _ws,
+      timeControl: Duration(minutes: timeControl),
+    ),
+  ),
+).then((_) async {
+  _loadProfile(); // reload stats
+  await _ws.reconnectToLobby(widget.username); // refresh socket!
+  _ws.onMessage = _handleWsMessage;
+});
+ }
 
   void _sendInvite(String to) {
     if (!_ws.isConnected) {
@@ -175,21 +161,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   void _cancelInvite() {
+    _ws.cancelInvite();
     setState(() => invitedUser = null);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Invite cancelled.")),
     );
   }
 
-  void _returnToGame() {
-    if (ongoingGameId != null) {
-      _ws.sendResumeCheck();
-    }
-  }
-
   @override
   void dispose() {
-    _ws.disconnect();
     _searchController.dispose();
     super.dispose();
   }
@@ -218,7 +198,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
 
-          // time control dropdown
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
@@ -236,14 +215,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
 
-          // return to game
-          if (ongoingGameId != null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: ElevatedButton(onPressed: _returnToGame, child: const Text('Return to Game')),
-            ),
-
-          // incoming invite dialog
           if (inviteFrom != null)
             AlertDialog(
               title: const Text('Game Invite'),
