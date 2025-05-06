@@ -45,31 +45,5 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-
-	<!-- 🌐 Allow ws:// localhost connections -->
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
-
-	<!-- 🔐 Firebase Auth redirect support -->
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>com.googleusercontent.apps.YOUR_REVERSED_CLIENT_ID</string>
-			</array>
-		</dict>
-	</array>
-
-	<!-- 📸 Optional: camera + photo permissions -->
-	<key>NSCameraUsageDescription</key>
-	<string>Needed to take profile pictures</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Needed to pick photos</string>
 </dict>
 </plist>

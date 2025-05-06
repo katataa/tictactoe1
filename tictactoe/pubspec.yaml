@@ -40,8 +40,11 @@ dependencies:
   firebase_messaging: ^15.2.5
   firebase_storage: ^12.4.5
   flutter_riverpod: ^2.6.1
-  web_socket_channel: ^2.4.0
+  web_socket_channel: ^3.0.3
   shared_preferences: ^2.5.3
+  flutter_local_notifications: ^17.0.0
+  firebase_crashlytics: ^4.0.4
+  firebase_analytics: ^11.4.5
 
 dev_dependencies:
   flutter_test:

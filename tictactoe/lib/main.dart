@@ -4,31 +4,20 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'features/auth/home/home_screen.dart';
 import 'features/auth/presentation/login_screen.dart';
-import 'features/auth/presentation/verify_email_screen.dart'; // ⬅️ ADD THIS
+import 'features/auth/presentation/verify_email_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-
-  final auth = FirebaseAuth.instance;
-  final user = auth.currentUser;
-  final bool verified = user?.emailVerified ?? false;
-  print("🔥 App initialized, running now...");
-
-  runApp(
-    ProviderScope(
-      child: MyApp(
-        startScreen: user == null
-            ? const LoginScreen()
-            : (verified ? const HomeScreen() : const VerifyEmailScreen()),
-      ),
-    ),
-  );
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    print("🔥 Firebase init failed: $e");
+  }
+  runApp(const ProviderScope(child: InitApp()));
 }
 
-class MyApp extends StatelessWidget {
-  final Widget startScreen;
-  const MyApp({super.key, required this.startScreen});
+class InitApp extends StatelessWidget {
+  const InitApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -39,10 +28,29 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
         useMaterial3: true,
       ),
-      home: startScreen,
+      home: const AuthGate(),
       routes: {
         '/home': (_) => const HomeScreen(),
         '/login': (_) => const LoginScreen(),
+      },
+    );
+  }
+}
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const LoginScreen();
+
+        final user = snapshot.data!;
+        return user.emailVerified
+            ? const HomeScreen()
+            : const VerifyEmailScreen();
       },
     );
   }
