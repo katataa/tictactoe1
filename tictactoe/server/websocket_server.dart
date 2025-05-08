@@ -36,7 +36,7 @@ final players = <String, Player>{};
 final activeGames = <String, GameSession>{};
 
 void main() async {
-  final server = await HttpServer.bind(InternetAddress.anyIPv4, 8080);
+  final server = await HttpServer.bind(InternetAddress("0.0.0.0"), 8080);
   print('✅ WebSocket Server running on ws://${server.address.address}:8080');
 
   // Clean up ghost connections
