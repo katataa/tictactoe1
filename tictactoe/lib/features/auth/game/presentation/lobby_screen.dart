@@ -4,10 +4,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../data/websocket_service.dart';
 import 'game_board_screen.dart';
 import 'bot_game_screen.dart';
+import '../../../../core/encryption_helper.dart';
 
 class LobbyScreen extends StatefulWidget {
-  final String username;
-  const LobbyScreen({Key? key, required this.username}) : super(key: key);
+  const LobbyScreen({Key? key}) : super(key: key);
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();
@@ -25,85 +25,101 @@ class _LobbyScreenState extends State<LobbyScreen> {
   int selectedTimeControl = 5;
   final _searchController = TextEditingController();
   bool _loadingSearch = false;
+  String _decryptedUsername = '';
+  String _decryptedEmail = '';
 
   @override
   void initState() {
     super.initState();
     _loadProfile();
-   _ws.reconnectToLobby(widget.username).then((_) {
-  _ws.onMessage = _handleWsMessage;
-});
+  }
 
+  Future<void> _loadProfile() async {
+    final u = FirebaseAuth.instance.currentUser;
+    if (u == null) return;
+
+    final doc = await FirebaseFirestore.instance.collection('users').doc(u.uid).get();
+    final data = doc.data();
+    if (data != null) {
+      final decryptedUsername = await EncryptionHelper.decrypt(data['username']);
+      final decryptedEmail = await EncryptionHelper.decrypt(data['email']);
+      setState(() {
+        avatar = data['avatar'] ?? avatar;
+        wins = data['wins'] ?? wins;
+        losses = data['losses'] ?? losses;
+        _decryptedUsername = decryptedUsername;
+        _decryptedEmail = decryptedEmail;
+      });
+
+      await _ws.reconnectToLobby(decryptedUsername);
+      _ws.onMessage = _handleWsMessage;
+    }
   }
 
   void _handleWsMessage(Map<String, dynamic> msg) {
     switch (msg['type']) {
       case 'user_list':
-        final list = List<String>.from(msg['users'] as List);
-        list.remove(widget.username);
+        final list = List<String>.from(msg['users']);
+        list.remove(_decryptedUsername);
         setState(() => onlineUsers = list);
         break;
-
       case 'invite_received':
         setState(() {
           inviteFrom = msg['from'] as String?;
           inviteTimeControl = msg['timeControl'] as int? ?? selectedTimeControl;
         });
         break;
-
       case 'game_start':
         _launchGame(
-          opponent: msg['opponent'] as String,
-          symbol: msg['symbol'] as String,
-          gameId: msg['gameId'] as String,
-          timeControl: msg['timeControl'] as int? ?? selectedTimeControl,
+          opponent: msg['opponent'],
+          symbol: msg['symbol'],
+          gameId: msg['gameId'],
+          timeControl: msg['timeControl'] ?? selectedTimeControl,
         );
         break;
     }
   }
 
-  Future<void> _loadProfile() async {
-    final u = FirebaseAuth.instance.currentUser;
-    if (u == null) return;
-    final doc = await FirebaseFirestore.instance.collection('users').doc(u.uid).get();
-    final d = doc.data();
-    if (d != null) {
-      setState(() {
-        avatar = d['avatar'] as String? ?? avatar;
-        wins = d['wins'] as int? ?? wins;
-        losses = d['losses'] as int? ?? losses;
-      });
-    }
-  }
-
   Future<void> _searchUsers(String query) async {
-  if (query.isEmpty) {
-    setState(() => allUsers.clear());
-    return;
-  }
+    if (query.isEmpty) {
+      setState(() => allUsers.clear());
+      return;
+    }
 
-  setState(() => _loadingSearch = true);
+    setState(() => _loadingSearch = true);
+    try {
+      final userQuery = FirebaseFirestore.instance
+          .collection('users')
+          .where('searchUsername', isGreaterThanOrEqualTo: query.toLowerCase())
+          .where('searchUsername', isLessThanOrEqualTo: query.toLowerCase() + '\uf8ff');
+
+      final emailQuery = FirebaseFirestore.instance
+          .collection('users')
+          .where('searchEmail', isGreaterThanOrEqualTo: query.toLowerCase())
+          .where('searchEmail', isLessThanOrEqualTo: query.toLowerCase() + '\uf8ff');
+
+      final results = await Future.wait([userQuery.get(), emailQuery.get()]);
+
+      final all = <String, Map<String, String>>{};
+
+      for (var doc in [...results[0].docs, ...results[1].docs]) {
   try {
-    final snap = await FirebaseFirestore.instance
-        .collection('users')
-        .orderBy('username')
-        .startAt([query])
-        .endAt([query + '\uf8ff'])
-        .get();
-
-    setState(() {
-      allUsers = snap.docs.map((d) => {
-        'username': d['username'],
-        'email': d['email'],
-      }).toList();
-    });
-  } catch (_) {
-    setState(() => allUsers.clear());
-  } finally {
-    setState(() => _loadingSearch = false);
+    final decryptedUsername = await EncryptionHelper.decrypt(doc['username']);
+    final decryptedEmail = await EncryptionHelper.decrypt(doc['email']);
+    all[doc.id] = {'username': decryptedUsername, 'email': decryptedEmail};
+  } catch (e) {
+    debugPrint('Decryption failed for user: $e');
   }
 }
 
+      setState(() => allUsers = all.values.toList());
+    } catch (e) {
+      debugPrint('Search error: $e');
+      setState(() => allUsers.clear());
+    } finally {
+      setState(() => _loadingSearch = false);
+    }
+  }
 
   void _launchGame({
     required String opponent,
@@ -117,24 +133,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
       inviteTimeControl = null;
     });
 
-   Navigator.push(
-  context,
-  MaterialPageRoute(
-    builder: (_) => GameBoardScreen(
-      username: widget.username,
-      opponent: opponent,
-      symbol: symbol,
-      gameId: gameId,
-      socket: _ws,
-      timeControl: Duration(minutes: timeControl),
-    ),
-  ),
-).then((_) async {
-  _loadProfile(); // reload stats
-  await _ws.reconnectToLobby(widget.username); // refresh socket!
-  _ws.onMessage = _handleWsMessage;
-});
- }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GameBoardScreen(
+          username: _decryptedUsername,
+          opponent: opponent,
+          symbol: symbol,
+          gameId: gameId,
+          socket: _ws,
+          timeControl: Duration(minutes: timeControl),
+        ),
+      ),
+    ).then((_) async {
+      _loadProfile();
+    });
+  }
 
   void _sendInvite(String to) {
     if (!_ws.isConnected) {
@@ -175,10 +189,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   @override
-  Widget build(BuildContext c) {
+  Widget build(BuildContext context) {
     final isSearch = _searchController.text.isNotEmpty;
     final list = isSearch
-        ? allUsers.map((u) => u['username'] as String).toList()
+        ? allUsers.map((u) => u['username']!).toList()
         : onlineUsers;
 
     return Scaffold(
@@ -193,11 +207,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 backgroundImage: AssetImage('assets/avatars/$avatar'),
                 radius: 25,
               ),
-              title: Text(widget.username, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text('Wins: $wins | Losses: $losses'),
+              title: Text(_decryptedUsername, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text('$_decryptedEmail\nWins: $wins | Losses: $losses'),
             ),
           ),
-
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
@@ -207,14 +220,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 DropdownButton<int>(
                   value: selectedTimeControl,
                   items: [5, 10, 15].map((m) => DropdownMenuItem(value: m, child: Text('$m min'))).toList(),
-                  onChanged: (m) {
-                    if (m != null) setState(() => selectedTimeControl = m);
-                  },
+                  onChanged: (m) => setState(() => selectedTimeControl = m!),
                 ),
               ],
             ),
           ),
-
           if (inviteFrom != null)
             AlertDialog(
               title: const Text('Game Invite'),
@@ -224,7 +234,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 TextButton(onPressed: () => setState(() => inviteFrom = null), child: const Text('Decline')),
               ],
             ),
-
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
@@ -237,7 +246,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
               onChanged: (v) => _searchUsers(v.trim()),
             ),
           ),
-
           const SizedBox(height: 16),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 16),
@@ -246,7 +254,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
               child: Text('Players', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             ),
           ),
-
           Expanded(
             child: _loadingSearch
                 ? const Center(child: CircularProgressIndicator())
@@ -254,29 +261,33 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ? const Center(child: Text('No players found.'))
                     : ListView.builder(
                         itemCount: list.length,
-                        itemBuilder: (_, i) {
-                          final user = list[i];
-                          final online = onlineUsers.contains(user);
-                          return ListTile(
-                            leading: Icon(Icons.circle, color: online ? Colors.green : Colors.grey, size: 12),
-                            title: Text(user),
-                            trailing: online
-                                ? (invitedUser == user
-                                    ? ElevatedButton(
-                                        onPressed: _cancelInvite,
-                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-                                        child: const Text('Cancel'),
-                                      )
-                                    : ElevatedButton(
-                                        onPressed: () => _sendInvite(user),
-                                        child: const Text('Invite'),
-                                      ))
-                                : const Text('Offline', style: TextStyle(color: Colors.grey)),
-                          );
-                        },
+itemBuilder: (_, i) {
+  final user = list[i];
+  final online = onlineUsers.contains(user.toLowerCase());
+
+  return ListTile(
+    leading: Icon(Icons.circle, color: online ? Colors.green : Colors.grey, size: 12),
+    title: Text(user),
+    subtitle: isSearch
+        ? Text(allUsers.firstWhere((u) => u['username'] == user)['email'] ?? '')
+        : null,
+    trailing: online
+        ? (invitedUser == user
+            ? ElevatedButton(
+                onPressed: _cancelInvite,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                child: const Text('Cancel'),
+              )
+            : ElevatedButton(
+                onPressed: () => _sendInvite(user),
+                child: const Text('Invite'),
+              ))
+        : const Text('Offline', style: TextStyle(color: Colors.grey)),
+  );
+},
+
                       ),
           ),
-
           const SizedBox(height: 16),
           ElevatedButton.icon(
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BotGameScreen())),

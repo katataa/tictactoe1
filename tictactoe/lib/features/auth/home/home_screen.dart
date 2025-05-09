@@ -92,7 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => LobbyScreen(username: username)),
+                        MaterialPageRoute(builder: (_) => LobbyScreen()),
                       );
                     },
                     child: const Text("Go to Lobby"),

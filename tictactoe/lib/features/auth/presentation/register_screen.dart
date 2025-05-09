@@ -19,54 +19,64 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool loading = false;
 
-void register() async {
-  final passwordError = validatePassword(passwordController.text);
-  if (passwordError != null) {
-    showSnack(passwordError);
-    return;
-  }
-
-  setState(() => loading = true);
-  try {
-    await _authRepo.signUp(
-      emailController.text,
-      passwordController.text,
-      usernameController.text,
-    );
-
-    await FirebaseAuth.instance.signInWithEmailAndPassword(
-      email: emailController.text.trim(),
-      password: passwordController.text.trim(),
-    );
-
-    await FirebaseAuth.instance.currentUser?.sendEmailVerification();
-
-    if (!mounted) return;
-
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const VerifyEmailScreen()),
-    );
-  } on FirebaseAuthException catch (e) {
-    switch (e.code) {
-      case 'email-already-in-use':
-        showSnack("That email is already registered.");
-        break;
-      case 'invalid-email':
-        showSnack("Please enter a valid email address.");
-        break;
-      case 'weak-password':
-        showSnack("Password should be at least 6 characters.");
-        break;
-      default:
-        showSnack("Registration failed: ${e.message}");
+  void register() async {
+    final passwordError = validatePassword(passwordController.text);
+    if (passwordError != null) {
+      showSnack(passwordError);
+      return;
     }
-  } catch (e) {
-    showSnack("Something went wrong during registration.");
-  } finally {
-    setState(() => loading = false);
-  }
+
+
+    setState(() => loading = true);
+    try {
+      await _authRepo.signUp(
+  emailController.text.trim(),
+  passwordController.text,
+  usernameController.text.trim(), // NOT encrypted
+);
+
+await FirebaseAuth.instance.signInWithEmailAndPassword(
+  email: emailController.text.trim(),
+  password: passwordController.text.trim(),
+);
+
+final uid = FirebaseAuth.instance.currentUser?.uid;
+if (uid != null) {
+  await FirebaseAuth.instance.currentUser?.sendEmailVerification();
+  await _authRepo.saveUser(
+    uid: uid,
+    username: usernameController.text.trim(), // NOT encrypted here
+    email: emailController.text.trim(),
+  );
 }
+
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const VerifyEmailScreen()),
+      );
+    } on FirebaseAuthException catch (e) {
+      switch (e.code) {
+        case 'email-already-in-use':
+          showSnack("That email is already registered.");
+          break;
+        case 'invalid-email':
+          showSnack("Please enter a valid email address.");
+          break;
+        case 'weak-password':
+          showSnack("Password should be at least 6 characters.");
+          break;
+        default:
+          showSnack("Registration failed: ${e.message}");
+      }
+    } catch (e) {
+      showSnack("Something went wrong during registration.");
+    } finally {
+      setState(() => loading = false);
+    }
+  }
 
   void showSnack(String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
@@ -81,15 +91,28 @@ void register() async {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            TextField(controller: usernameController, decoration: const InputDecoration(labelText: 'Username', border: OutlineInputBorder())),
+            TextField(
+              controller: usernameController,
+              decoration: const InputDecoration(labelText: 'Username', border: OutlineInputBorder()),
+            ),
             const SizedBox(height: 16),
-            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder()),
+            ),
             const SizedBox(height: 16),
-            TextField(controller: passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder())),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder()),
+            ),
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: loading ? null : register,
-              style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
               child: const Text('Register'),
             ),
           ],

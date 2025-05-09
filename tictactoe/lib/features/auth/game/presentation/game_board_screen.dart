@@ -1,5 +1,3 @@
-// lib/features/game/presentation/game_board_screen.dart
-
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -51,9 +49,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   void initState() {
     super.initState();
 
-    widget.socket.joinGame(widget.gameId, widget.symbol); // ✅ passes both
-
-
+    widget.socket.joinGame(widget.gameId, widget.symbol);
 
     board = List.filled(9, '');
     currentTurn = 'X';
@@ -89,67 +85,107 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   }
 
   void _handleMessage(Map<String, dynamic> msg) {
-    if (!mounted) return;
-    switch (msg['type']) {
-      case 'move':
-        setState(() {
-          board = List<String>.from(msg['board']);
-          moveHistory.add('${msg['by']} → cell ${msg['cell']}');
-          currentTurn = msg['nextTurn'];
-          winner = msg['winner'];
-          isMyTurn = (currentTurn == widget.symbol);
-          if (winner != null && !gameEnded) {
-            gameEnded = true;
-            _persistStats();
+    try {
+      switch (msg['type']) {
+        case 'move':
+          debugPrint('♻️ Resuming game with updated board');
+          setState(() {
+            board = List<String>.from(msg['board']);
+            moveHistory.add('${msg['by']} → cell ${msg['cell']}');
+            currentTurn = msg['nextTurn'];
+            winner = msg['winner'];
+            isMyTurn = (currentTurn == widget.symbol);
+            if (winner != null && !gameEnded) {
+              gameEnded = true;
+              _persistStats();
+            }
+          });
+          break;
+
+        case 'restart_prompt':
+          _showRestartDialog();
+          break;
+
+        case 'restart_confirmed':
+          _restartGame();
+          break;
+
+        case 'restart_declined':
+          _showDeclinedDialog();
+          break;
+
+        case 'player_left':
+          if (!gameEnded) {
+            if (msg['voluntary'] == true) {
+              _endGame(lost: false);
+              _persistStats();
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => AlertDialog(
+                  title: const Text('Opponent Left'),
+                  content: const Text('Your opponent left the match. You win!'),
+                  actions: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        Navigator.of(context).pop();
+                      },
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              );
+            } else {
+              _handlePlayerLeft();
+            }
           }
-        });
-        break;
+          break;
 
-      case 'restart_prompt':
-        _showRestartDialog();
-        break;
-
-      case 'restart_confirmed':
-        _restartGame();
-        break;
-
-      case 'restart_declined':
-        _showDeclinedDialog();
-        break;
-
-      case 'player_left':
-  if (!gameEnded) {
-    if (msg['voluntary'] == true) {
-      _endGame(lost: false); // you win
-      _persistStats();
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => AlertDialog(
-          title: const Text('Opponent Left'),
-          content: const Text('Your opponent left the match. You win!'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pop();
-              },
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    } else {
-      _handlePlayerLeft(); // fallback disconnect countdown
+        case 'disconnect_timeout':
+          if (!gameEnded) _showDisconnectedDialog();
+          break;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Non-critical error: $e');
+      if (e.toString().contains('FormatException') || e.toString().contains('null')) {
+        _redirectToLobby();
+      } else {
+        _showRecoverDialog();
+      }
     }
   }
-  break;
 
+  void _showRecoverDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Error'),
+        content: const Text('Something went wrong. Game reloaded to last known state.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+      ),
+    );
+  }
 
-      case 'disconnect_timeout':
-        if (!gameEnded) _showDisconnectedDialog();
-        break;
-    }
+  void _redirectToLobby() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Critical Error'),
+        content: const Text('Game failed to load correctly. Returning to lobby...'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              widget.socket.leaveGame();
+              Navigator.pop(context);
+              Navigator.pop(context);
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _persistStats() async {
@@ -179,9 +215,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
 
   void _endGame({required bool lost}) {
     setState(() {
-      winner = lost
-          ? (widget.symbol == 'X' ? 'O' : 'X')
-          : widget.symbol;
+      winner = lost ? (widget.symbol == 'X' ? 'O' : 'X') : widget.symbol;
       gameEnded = true;
     });
     _persistStats();
@@ -257,35 +291,34 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   }
 
   void _handlePlayerLeft() {
-  if (gameEnded) return;
+    if (gameEnded) return;
 
-  setState(() {
-    winner = widget.symbol; // you win!
-    gameEnded = true;
-    opponentDisconnected = false; // not a network issue
-  });
+    setState(() {
+      winner = widget.symbol;
+      gameEnded = true;
+      opponentDisconnected = false;
+    });
 
-  _persistStats(); // record win
+    _persistStats();
 
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => AlertDialog(
-      title: const Text('Opponent Left'),
-      content: const Text('Your opponent left the game. You win!'),
-      actions: [
-        TextButton(
-          onPressed: () {
-            Navigator.of(context).pop(); // close dialog
-            Navigator.of(context).pop(); // back to lobby
-          },
-          child: const Text('OK'),
-        ),
-      ],
-    ),
-  );
-}
-
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Opponent Left'),
+        content: const Text('Your opponent left the game. You win!'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).pop();
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
 
   void _showDisconnectedDialog() {
     _persistStats();
@@ -309,32 +342,31 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   }
 
   void _confirmBack() {
-  if (gameEnded) {
-    widget.socket.leaveGame();
-    Navigator.of(context).pop();
-    return;
+    if (gameEnded) {
+      widget.socket.leaveGame();
+      Navigator.of(context).pop();
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Leave Game?'),
+        content: const Text('Are you sure? You will forfeit this match.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              widget.socket.leaveGame();
+              Navigator.of(context).pop();
+              Navigator.of(context).pop();
+            },
+            child: const Text('Leave'),
+          ),
+        ],
+      ),
+    );
   }
-
-  showDialog(
-    context: context,
-    builder: (_) => AlertDialog(
-      title: const Text('Leave Game?'),
-      content: const Text('Are you sure? You will forfeit this match.'),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        TextButton(
-          onPressed: () {
-            widget.socket.leaveGame();
-            Navigator.of(context).pop();
-            Navigator.of(context).pop();
-          },
-          child: const Text('Leave'),
-        ),
-      ],
-    ),
-  );
-}
-
 
   @override
   void dispose() {
