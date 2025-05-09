@@ -34,11 +34,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _loadProfile();
   }
 
-  Future<void> _loadProfile() async {
-    final u = FirebaseAuth.instance.currentUser;
-    if (u == null) return;
+  void _loadProfile() {
+  final u = FirebaseAuth.instance.currentUser;
+  if (u == null) return;
 
-    final doc = await FirebaseFirestore.instance.collection('users').doc(u.uid).get();
+  FirebaseFirestore.instance.collection('users').doc(u.uid).snapshots().listen((doc) async {
     final data = doc.data();
     if (data != null) {
       final decryptedUsername = await EncryptionHelper.decrypt(data['username']);
@@ -54,7 +54,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       await _ws.reconnectToLobby(decryptedUsername);
       _ws.onMessage = _handleWsMessage;
     }
-  }
+  });
+}
+
 
   void _handleWsMessage(Map<String, dynamic> msg) {
     switch (msg['type']) {
@@ -133,12 +135,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
       inviteTimeControl = null;
     });
 
+    final matchedUser = allUsers.firstWhere((u) => u['username'] == opponent, orElse: () => {});
+  final opponentEmail = matchedUser['email'] ?? '';
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => GameBoardScreen(
           username: _decryptedUsername,
           opponent: opponent,
+          opponentEmail: opponentEmail,
           symbol: symbol,
           gameId: gameId,
           socket: _ws,

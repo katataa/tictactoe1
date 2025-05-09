@@ -7,6 +7,7 @@ import '../data/websocket_service.dart';
 class GameBoardScreen extends StatefulWidget {
   final String username;
   final String opponent;
+  final String opponentEmail;
   final String symbol;
   final String gameId;
   final WebSocketService socket;
@@ -16,6 +17,7 @@ class GameBoardScreen extends StatefulWidget {
     Key? key,
     required this.username,
     required this.opponent,
+    required this.opponentEmail,
     required this.symbol,
     required this.gameId,
     required this.socket,
@@ -90,7 +92,9 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
         case 'move':
           debugPrint('♻️ Resuming game with updated board');
           setState(() {
-            board = List<String>.from(msg['board']);
+            final newBoard = List<String>.from(msg['board']);
+if (newBoard.length != 9) throw FormatException('Board length invalid');
+board = newBoard;
             moveHistory.add('${msg['by']} → cell ${msg['cell']}');
             currentTurn = msg['nextTurn'];
             winner = msg['winner'];
@@ -118,7 +122,6 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
           if (!gameEnded) {
             if (msg['voluntary'] == true) {
               _endGame(lost: false);
-              _persistStats();
               showDialog(
                 context: context,
                 barrierDismissible: false,
@@ -189,29 +192,34 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   }
 
   Future<void> _persistStats() async {
-    final me = FirebaseAuth.instance.currentUser;
-    if (me == null) return;
-    final usersRef = FirebaseFirestore.instance.collection('users');
-    final meDoc = usersRef.doc(me.uid);
+  final me = FirebaseAuth.instance.currentUser;
+  if (me == null || winner == null) return;
 
-    final q = await usersRef
-        .where('username', isEqualTo: widget.opponent)
-        .limit(1)
-        .get();
-    final oppUid = q.docs.isNotEmpty ? q.docs.first.id : null;
+  final usersRef = FirebaseFirestore.instance.collection('users');
+  final meDoc = usersRef.doc(me.uid);
 
-    if (winner == widget.symbol) {
-      await meDoc.update({'wins': FieldValue.increment(1)});
-      if (oppUid != null) {
-        await usersRef.doc(oppUid).update({'losses': FieldValue.increment(1)});
-      }
-    } else if (winner != null && winner != 'draw') {
-      await meDoc.update({'losses': FieldValue.increment(1)});
-      if (oppUid != null) {
-        await usersRef.doc(oppUid).update({'wins': FieldValue.increment(1)});
-      }
+  // Find opponent by username (case-insensitive)
+  final q = await usersRef
+       .where('email', isEqualTo: widget.opponentEmail)
+      .limit(1)
+      .get();
+
+  final oppUid = q.docs.isNotEmpty ? q.docs.first.id : null;
+  final oppDoc = oppUid != null ? usersRef.doc(oppUid) : null;
+
+  // Update this user
+  if (winner == widget.symbol) {
+    await meDoc.update({'wins': FieldValue.increment(1)});
+    if (oppDoc != null) {
+      await oppDoc.update({'losses': FieldValue.increment(1)});
+    }
+  } else if (winner != 'draw') {
+    await meDoc.update({'losses': FieldValue.increment(1)});
+    if (oppDoc != null) {
+      await oppDoc.update({'wins': FieldValue.increment(1)});
     }
   }
+}
 
   void _endGame({required bool lost}) {
     setState(() {
@@ -357,6 +365,12 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
           TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
           TextButton(
             onPressed: () {
+              setState(() {
+  winner = widget.symbol == 'X' ? 'O' : 'X';
+  gameEnded = true;
+});
+_persistStats();
+
               widget.socket.leaveGame();
               Navigator.of(context).pop();
               Navigator.of(context).pop();
