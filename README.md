@@ -5,13 +5,21 @@ Join The Fun is a real-time multiplayer Tic-Tac-Toe game built in Flutter, featu
 ## 🚀 Features
 
 🔐 Email/password authentication (with email verification)
+
 ✅ Password strength validation
+
 🤖 Play against a bot
+
 🌐 Real-time multiplayer with WebSocket
+
 🧠 Match timer, move history, and disconnect handling
+
 👥 Online lobby with invite system
+
 📉 Automatic win/loss tracking
+
 🔐 Encrypted usernames and emails in Firestore
+
 📦 Project Structure
 
 
