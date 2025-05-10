@@ -61,7 +61,9 @@ const String kWebSocketUrl = 'ws://<your-local-ip>:8080';
 💡 To find your local IP address:
 
 On macOS: ifconfig | grep inet
+
 On Windows: ipconfig
+
 On Linux: hostname -I
 
 
