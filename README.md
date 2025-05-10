@@ -88,13 +88,14 @@ dart websocket_server.dart
 ## 🖼️ Screenshots
 
 ### 🔐 Login Screen
-![Login Screen](assets/screenshots/LoginScreen.png)
+<img src="tictactoe/assets/screenshots/LoginScreen.png" alt="Login Screen" width="300"/>
+
 
 ### 🧑‍🤝‍🧑 Lobby Screen
-![Lobby Screen](assets/screenshots/LobbyScreen.png)
+<img src="tictactoe/assets/screenshots/LobbyScreen.png" alt="Lobby Screen" width="300"/>
 
 ### 🎮 Game Screen
-![Game Screen](assets/screenshots/GameScreen.png)
+<img src="tictactoe/assets/screenshots/GameScreen.png" alt="Game Screen" width="300"/>
 
 ---
 

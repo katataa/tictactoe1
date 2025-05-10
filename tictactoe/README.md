@@ -5,13 +5,21 @@ Join The Fun is a real-time multiplayer Tic-Tac-Toe game built in Flutter, featu
 ## 🚀 Features
 
 🔐 Email/password authentication (with email verification)
+
 ✅ Password strength validation
+
 🤖 Play against a bot
+
 🌐 Real-time multiplayer with WebSocket
+
 🧠 Match timer, move history, and disconnect handling
+
 👥 Online lobby with invite system
+
 📉 Automatic win/loss tracking
+
 🔐 Encrypted usernames and emails in Firestore
+
 📦 Project Structure
 
 
@@ -52,9 +60,11 @@ const String kWebSocketUrl = 'ws://<your-local-ip>:8080';
 
 💡 To find your local IP address:
 
-On macOS: ifconfig | grep inet
-On Windows: ipconfig
-On Linux: hostname -I
+**On macOS:** ifconfig | grep inet
+
+**On Windows:** ipconfig
+
+**On Linux:** hostname -I
 
 
 Once updated, make sure to run the WebSocket server:
@@ -78,13 +88,14 @@ dart websocket_server.dart
 ## 🖼️ Screenshots
 
 ### 🔐 Login Screen
-![Login Screen](assets/screenshots/LoginScreen.png)
+<img src="assets/screenshots/LoginScreen.png" alt="Login Screen" width="300"/>
+
 
 ### 🧑‍🤝‍🧑 Lobby Screen
-![Lobby Screen](assets/screenshots/LobbyScreen.png)
+<img src="assets/screenshots/LobbyScreen.png" alt="Lobby Screen" width="300"/>
 
 ### 🎮 Game Screen
-![Game Screen](assets/screenshots/GameScreen.png)
+<img src="assets/screenshots/GameScreen.png" alt="Game Screen" width="300"/>
 
 ---
 
