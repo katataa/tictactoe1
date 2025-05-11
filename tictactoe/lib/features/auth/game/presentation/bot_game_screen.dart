@@ -15,6 +15,7 @@ class _BotGameScreenState extends State<BotGameScreen> {
 
   void makeMove(int index) {
     if (board[index] == '' && winner == null) {
+      if (mounted) {
       setState(() {
         board[index] = currentTurn;
         winner = checkWinner();
@@ -24,19 +25,65 @@ class _BotGameScreenState extends State<BotGameScreen> {
       if (currentTurn == 'O' && winner == null) {
         Future.delayed(const Duration(milliseconds: 400), botMove);
       }
+      }
     }
   }
 
-  void botMove() {
-    final empty = <int>[];
-    for (int i = 0; i < board.length; i++) {
-      if (board[i] == '') empty.add(i);
-    }
-    if (empty.isNotEmpty) {
-      final move = empty[Random().nextInt(empty.length)];
-      makeMove(move);
+int? findWinningMove(String player) {
+  const wins = [
+    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+    [0, 4, 8], [2, 4, 6],
+  ];
+  for (var line in wins) {
+    final a = line[0], b = line[1], c = line[2];
+    final values = [board[a], board[b], board[c]];
+    final count = values.where((v) => v == player).length;
+    final emptyIndex = line.firstWhere((i) => board[i] == '', orElse: () => -1);
+    if (count == 2 && emptyIndex != -1) {
+      return emptyIndex;
     }
   }
+  return null;
+}
+
+  void botMove() {
+  int? bestMove;
+
+  bestMove = findWinningMove('O');
+  if (bestMove != null) {
+    makeMove(bestMove);
+    return;
+  }
+
+  bestMove = findWinningMove('X');
+  if (bestMove != null) {
+    makeMove(bestMove);
+    return;
+  }
+
+  if (board[4] == '') {
+    makeMove(4);
+    return;
+  }
+
+  final corners = [0, 2, 6, 8]..shuffle();
+  for (var i in corners) {
+    if (board[i] == '') {
+      makeMove(i);
+      return;
+    }
+  }
+  final empty = <int>[];
+  for (int i = 0; i < board.length; i++) {
+    if (board[i] == '') empty.add(i);
+  }
+  if (empty.isNotEmpty) {
+    final move = empty[Random().nextInt(empty.length)];
+    makeMove(move);
+  }
+}
+
 
   String? checkWinner() {
     const wins = [

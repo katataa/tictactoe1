@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -15,6 +17,7 @@ class LobbyScreen extends StatefulWidget {
 
 class _LobbyScreenState extends State<LobbyScreen> {
   final WebSocketService _ws = WebSocketService();
+  late final StreamSubscription<DocumentSnapshot> _profileSub;
   List<Map<String, dynamic>> allUsers = [];
   List<String> onlineUsers = [];
   String avatar = 'avatar1.png';
@@ -34,28 +37,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _loadProfile();
   }
 
-  void _loadProfile() {
+ void _loadProfile() {
   final u = FirebaseAuth.instance.currentUser;
   if (u == null) return;
 
-  FirebaseFirestore.instance.collection('users').doc(u.uid).snapshots().listen((doc) async {
+  _profileSub = FirebaseFirestore.instance.collection('users').doc(u.uid).snapshots().listen((doc) async {
     final data = doc.data();
     if (data != null) {
       final decryptedUsername = await EncryptionHelper.decrypt(data['username']);
       final decryptedEmail = await EncryptionHelper.decrypt(data['email']);
-      setState(() {
-        avatar = data['avatar'] ?? avatar;
-        wins = data['wins'] ?? wins;
-        losses = data['losses'] ?? losses;
-        _decryptedUsername = decryptedUsername;
-        _decryptedEmail = decryptedEmail;
-      });
+      if (mounted) {
+        setState(() {
+          avatar = data['avatar'] ?? avatar;
+          wins = data['wins'] ?? wins;
+          losses = data['losses'] ?? losses;
+          _decryptedUsername = decryptedUsername;
+          _decryptedEmail = decryptedEmail;
+        });
+      }
 
       await _ws.reconnectToLobby(decryptedUsername);
       _ws.onMessage = _handleWsMessage;
     }
   });
 }
+
 
 
   void _handleWsMessage(Map<String, dynamic> msg) {
@@ -66,10 +72,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
         setState(() => onlineUsers = list);
         break;
       case 'invite_received':
+      if (mounted) {
         setState(() {
           inviteFrom = msg['from'] as String?;
           inviteTimeControl = msg['timeControl'] as int? ?? selectedTimeControl;
         });
+       }
         break;
       case 'game_start':
         _launchGame(
@@ -129,11 +137,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
     required String gameId,
     required int timeControl,
   }) {
+    if (mounted) {
     setState(() {
       invitedUser = null;
       inviteFrom = null;
       inviteTimeControl = null;
     });
+     }
 
     final matchedUser = allUsers.firstWhere((u) => u['username'] == opponent, orElse: () => {});
   final opponentEmail = matchedUser['email'] ?? '';
@@ -173,10 +183,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
   void _acceptInvite() {
     if (inviteFrom != null && inviteTimeControl != null) {
       _ws.acceptInvite(inviteFrom!, inviteTimeControl!);
+      if (mounted) {
       setState(() {
         inviteFrom = null;
         inviteTimeControl = null;
       });
+     }
     }
   }
 
@@ -188,11 +200,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
+ @override
+void dispose() {
+  _searchController.dispose();
+  _profileSub.cancel();
+  super.dispose();
+}
+
 
   @override
   Widget build(BuildContext context) {

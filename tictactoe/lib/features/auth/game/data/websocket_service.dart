@@ -128,7 +128,7 @@ Future<void> reconnectToLobby(String username) async {
   void declineRestart() {
     if (_gameId != null) {
       _channel.sink.add(jsonEncode({
-        'type': 'restart_decline',
+        'type': 'restart_declined',
         'gameId': _gameId,
       }));
     }

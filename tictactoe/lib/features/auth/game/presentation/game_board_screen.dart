@@ -170,6 +170,26 @@ board = newBoard;
     );
   }
 
+  void _onRestartPressed() {
+  widget.socket.requestRestart();
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => AlertDialog(
+      title: const Text('Rematch Requested'),
+      content: const Text('Waiting for opponent to accept…'),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.of(context).pop();
+          },
+          child: const Text('Cancel'),
+        ),
+      ],
+    ),
+  );
+}
+
   void _redirectToLobby() {
     showDialog(
       context: context,
@@ -267,6 +287,11 @@ board = newBoard;
             },
             child: const Text('Decline'),
           ),
+          IconButton(
+  icon: const Icon(Icons.refresh),
+  onPressed: gameEnded ? _onRestartPressed : null,
+),
+
         ],
       ),
     );
@@ -482,7 +507,7 @@ _persistStats();
         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _confirmBack),
         actions: [
           IconButton(icon: const Icon(Icons.history), onPressed: _showHistory),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: winner != null ? () => widget.socket.requestRestart() : null),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: gameEnded ? () => widget.socket.requestRestart() : null),
         ],
       ),
       body: Center(

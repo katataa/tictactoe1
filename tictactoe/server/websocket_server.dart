@@ -255,6 +255,21 @@ case 'leave_game':
         }
       }
       break;
+
+      case 'restart_declined': 
+  final gameId = msg['gameId'] as String?;
+  final session = activeGames[gameId];
+  if (session != null) {
+    final other = (session.playerX == player.id)
+        ? session.playerO
+        : session.playerX;
+    players[other]?.socket.add(jsonEncode({
+      'type': 'restart_declined',
+      'gameId': gameId,
+    }));
+  }
+  break;
+
   }
 }
 

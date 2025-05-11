@@ -26,9 +26,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       final snapshot = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      if (mounted) {
       setState(() {
         username = snapshot.data()?['username'] ?? '';
       });
+      }
     }
   }
 
