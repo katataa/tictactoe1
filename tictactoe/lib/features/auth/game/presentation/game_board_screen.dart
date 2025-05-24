@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../data/websocket_service.dart';
 
 class GameBoardScreen extends StatefulWidget {
   final String username;
@@ -10,7 +9,6 @@ class GameBoardScreen extends StatefulWidget {
   final String opponentEmail;
   final String symbol;
   final String gameId;
-  final WebSocketService socket;
   final Duration timeControl;
 
   const GameBoardScreen({
@@ -20,7 +18,6 @@ class GameBoardScreen extends StatefulWidget {
     required this.opponentEmail,
     required this.symbol,
     required this.gameId,
-    required this.socket,
     this.timeControl = const Duration(minutes: 5),
   }) : super(key: key);
 
@@ -32,12 +29,15 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   late List<String> board;
   List<String> moveHistory = [];
   late String currentTurn;
+  StreamSubscription<DocumentSnapshot>? _roomSub;
 
   String? winner;
   bool isMyTurn = false;
   bool gameEnded = false;
   bool opponentDisconnected = false;
   int disconnectSecondsLeft = 120;
+  bool _snackBarShown = false;
+  bool _statsUpdateInProgress = false;
 
   late Duration myTime;
   late Duration opponentTime;
@@ -50,8 +50,6 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   @override
   void initState() {
     super.initState();
-
-    widget.socket.joinGame(widget.gameId, widget.symbol);
 
     board = List.filled(9, '');
     currentTurn = 'X';
@@ -80,173 +78,100 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
       }
     });
 
-    widget.socket.onMessage = _handleMessage;
-
     myTicker.start();
     opponentTicker.start();
+
+    // Add Firestore listener for real-time board updates
+    _roomSub = FirebaseFirestore.instance
+        .collection('rooms')
+        .doc(widget.gameId)
+        .snapshots()
+        .listen(_onRoomUpdate);
   }
 
-  void _handleMessage(Map<String, dynamic> msg) {
-    try {
-      switch (msg['type']) {
-        case 'move':
-          debugPrint('♻️ Resuming game with updated board');
-          setState(() {
-            final newBoard = List<String>.from(msg['board']);
-if (newBoard.length != 9) throw FormatException('Board length invalid');
-board = newBoard;
-            moveHistory.add('${msg['by']} → cell ${msg['cell']}');
-            currentTurn = msg['nextTurn'];
-            winner = msg['winner'];
-            isMyTurn = (currentTurn == widget.symbol);
-            if (winner != null && !gameEnded) {
-              gameEnded = true;
-              _persistStats();
-            }
-          });
-          break;
-
-        case 'restart_prompt':
-          _showRestartDialog();
-          break;
-
-        case 'restart_confirmed':
-          _restartGame();
-          break;
-
-        case 'restart_declined':
-          _showDeclinedDialog();
-          break;
-
-        case 'player_left':
-          if (!gameEnded) {
-            if (msg['voluntary'] == true) {
-              _endGame(lost: false);
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (_) => AlertDialog(
-                  title: const Text('Opponent Left'),
-                  content: const Text('Your opponent left the match. You win!'),
-                  actions: [
-                    TextButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        Navigator.of(context).pop();
-                      },
-                      child: const Text('OK'),
-                    ),
-                  ],
-                ),
-              );
-            } else {
-              _handlePlayerLeft();
-            }
-          }
-          break;
-
-        case 'disconnect_timeout':
-          if (!gameEnded) _showDisconnectedDialog();
-          break;
-      }
-    } catch (e) {
-      debugPrint('⚠️ Non-critical error: $e');
-      if (e.toString().contains('FormatException') || e.toString().contains('null')) {
-        _redirectToLobby();
-      } else {
-        _showRecoverDialog();
-      }
-    }
-  }
-
-  void _showRecoverDialog() {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Error'),
-        content: const Text('Something went wrong. Game reloaded to last known state.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
-      ),
-    );
-  }
-
-  void _onRestartPressed() {
-  widget.socket.requestRestart();
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => AlertDialog(
-      title: const Text('Rematch Requested'),
-      content: const Text('Waiting for opponent to accept…'),
-      actions: [
-        TextButton(
-          onPressed: () {
+  void _onRoomUpdate(DocumentSnapshot doc) async {
+    if (!doc.exists) {
+      // Room deleted (opponent left or game ended)
+      if (mounted) {
+        Future.microtask(() async {
+          if (_snackBarShown) return;
+          _snackBarShown = true;
+          while (Navigator.of(context).canPop()) {
             Navigator.of(context).pop();
-          },
-          child: const Text('Cancel'),
-        ),
-      ],
-    ),
-  );
-}
-
-  void _redirectToLobby() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Critical Error'),
-        content: const Text('Game failed to load correctly. Returning to lobby...'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              widget.socket.leaveGame();
-              Navigator.pop(context);
-              Navigator.pop(context);
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _persistStats() async {
-  final me = FirebaseAuth.instance.currentUser;
-  if (me == null || winner == null) return;
-
-  final usersRef = FirebaseFirestore.instance.collection('users');
-  final meDoc = usersRef.doc(me.uid);
-
-  // Find opponent by username (case-insensitive)
-  final q = await usersRef
-       .where('email', isEqualTo: widget.opponentEmail)
-      .limit(1)
-      .get();
-
-  final oppUid = q.docs.isNotEmpty ? q.docs.first.id : null;
-  final oppDoc = oppUid != null ? usersRef.doc(oppUid) : null;
-
-  // Update this user
-  if (winner == widget.symbol) {
-    await meDoc.update({'wins': FieldValue.increment(1)});
-    if (oppDoc != null) {
-      await oppDoc.update({'losses': FieldValue.increment(1)});
+            await Future.delayed(const Duration(milliseconds: 10));
+          }
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Game ended or opponent left.')),
+            );
+            Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+          }
+        });
+      }
+      return;
     }
-  } else if (winner != 'draw') {
-    await meDoc.update({'losses': FieldValue.increment(1)});
-    if (oppDoc != null) {
-      await oppDoc.update({'wins': FieldValue.increment(1)});
+    final data = doc.data() as Map<String, dynamic>;
+    // Check for status ended/cancelled
+    final status = data['status'];
+    if (status == 'ended' || status == 'cancelled') {
+      if (mounted) {
+        Future.microtask(() async {
+          if (_snackBarShown) return;
+          _snackBarShown = true;
+          while (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+            await Future.delayed(const Duration(milliseconds: 10));
+          }
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Game ended or cancelled.')),
+            );
+            Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+          }
+        });
+      }
+      return;
+    }
+    setState(() {
+      board = List<String>.from(data['board'] ?? List.filled(9, ''));
+      currentTurn = data['currentTurn'] ?? 'X';
+      isMyTurn = (currentTurn == widget.symbol);
+      winner = data['winner'];
+      gameEnded = winner != null && winner != '';
+      moveHistory = List<String>.from(data['moveHistory'] ?? []);
+      // Optionally sync timers here too
+    });
+    // Robust win/loss update: only increment if not already updated for this user in this game
+    if (gameEnded && !_statsUpdateInProgress && winner != null && winner != '' && winner != 'draw') {
+      _statsUpdateInProgress = true;
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+        final roomRef = FirebaseFirestore.instance.collection('rooms').doc(widget.gameId);
+        final statsUpdated = (data['statsUpdated'] ?? {}) as Map<String, dynamic>;
+        if (statsUpdated[user.uid] != true) {
+          try {
+            if (winner == widget.symbol) {
+              await userRef.update({'wins': FieldValue.increment(1)});
+            } else {
+              await userRef.update({'losses': FieldValue.increment(1)});
+            }
+            // Mark as updated in Firestore
+            await roomRef.update({'statsUpdated.${user.uid}': true});
+          } catch (e) {
+            // If update fails, allow retry on next update
+            _statsUpdateInProgress = false;
+          }
+        }
+      }
     }
   }
-}
 
   void _endGame({required bool lost}) {
     setState(() {
       winner = lost ? (widget.symbol == 'X' ? 'O' : 'X') : widget.symbol;
       gameEnded = true;
     });
-    _persistStats();
   }
 
   void _restartGame() {
@@ -274,24 +199,21 @@ board = newBoard;
         actions: [
           TextButton(
             onPressed: () {
-              widget.socket.acceptRestart();
               Navigator.of(context).pop();
             },
             child: const Text('Accept'),
           ),
           TextButton(
             onPressed: () {
-              widget.socket.declineRestart();
               Navigator.of(context).pop();
               Navigator.of(context).pop();
             },
             child: const Text('Decline'),
           ),
           IconButton(
-  icon: const Icon(Icons.refresh),
-  onPressed: gameEnded ? _onRestartPressed : null,
-),
-
+            icon: const Icon(Icons.refresh),
+            onPressed: gameEnded ? _onRestartPressed : null,
+          ),
         ],
       ),
     );
@@ -302,6 +224,25 @@ board = newBoard;
         Navigator.of(context).pop();
       }
     });
+  }
+
+  void _onRestartPressed() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Rematch Requested'),
+        content: const Text('Waiting for opponent to accept…'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showDeclinedDialog() {
@@ -323,38 +264,7 @@ board = newBoard;
     );
   }
 
-  void _handlePlayerLeft() {
-    if (gameEnded) return;
-
-    setState(() {
-      winner = widget.symbol;
-      gameEnded = true;
-      opponentDisconnected = false;
-    });
-
-    _persistStats();
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Opponent Left'),
-        content: const Text('Your opponent left the game. You win!'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pop();
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showDisconnectedDialog() {
-    _persistStats();
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -374,33 +284,83 @@ board = newBoard;
     );
   }
 
-  void _confirmBack() {
-    if (gameEnded) {
-      widget.socket.leaveGame();
-      Navigator.of(context).pop();
-      return;
-    }
-
+  void _showQuitDialog() {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Leave Game?'),
-        content: const Text('Are you sure? You will forfeit this match.'),
+        title: const Text('Quit Game?'),
+        content: const Text('Are you sure you want to quit? You will forfeit this match.'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
           TextButton(
-            onPressed: () {
-              setState(() {
-  winner = widget.symbol == 'X' ? 'O' : 'X';
-  gameEnded = true;
-});
-_persistStats();
-
-              widget.socket.leaveGame();
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              print('[QUIT] Quit button pressed');
               Navigator.of(context).pop();
-              Navigator.of(context).pop();
+              final opponentSymbol = widget.symbol == 'X' ? 'O' : 'X';
+              final user = FirebaseAuth.instance.currentUser;
+              if (user != null) {
+                final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+                final roomRef = FirebaseFirestore.instance.collection('rooms').doc(widget.gameId);
+                try {
+                  print('[QUIT] Updating room winner and gameEndedBy');
+                  await roomRef.update({
+                    'winner': opponentSymbol,
+                    'gameEndedBy': widget.username,
+                  });
+                } catch (e) {
+                  print('[QUIT][ERROR] Failed to update room: $e');
+                }
+                try {
+                  print('[QUIT] Deleting invites for this room');
+                  final invites = await FirebaseFirestore.instance.collection('invites').where('roomId', isEqualTo: widget.gameId).get();
+                  for (final doc in invites.docs) {
+                    await doc.reference.delete();
+                  }
+                } catch (e) {
+                  print('[QUIT][ERROR] Failed to delete invites: $e');
+                }
+                try {
+                  print('[QUIT] Updating stats if needed');
+                  final roomSnap = await roomRef.get();
+                  final data = roomSnap.data();
+                  if (data != null) {
+                    final statsUpdated = (data['statsUpdated'] ?? {}) as Map<String, dynamic>;
+                    if (statsUpdated[user.uid] != true) {
+                      try {
+                        if (opponentSymbol == widget.symbol) {
+                          await userRef.update({'wins': FieldValue.increment(1)});
+                        } else {
+                          await userRef.update({'losses': FieldValue.increment(1)});
+                        }
+                        await roomRef.update({'statsUpdated.${user.uid}': true});
+                      } catch (e) {
+                        print('[QUIT][ERROR] Failed to update stats: $e');
+                      }
+                    }
+                  }
+                } catch (e) {
+                  print('[QUIT][ERROR] Failed to get room or update stats: $e');
+                }
+                try {
+                  print('[QUIT] Waiting 2 seconds before deleting room');
+                  await Future.delayed(const Duration(seconds: 2));
+                  print('[QUIT] Deleting room');
+                  await roomRef.delete();
+                } catch (e) {
+                  print('[QUIT][ERROR] Failed to delete room: $e');
+                }
+                if (mounted) {
+                  print('[QUIT] Navigating to home/lobby');
+                  Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+                }
+              } else {
+                print('[QUIT][ERROR] No user found');
+              }
             },
-            child: const Text('Leave'),
+            child: const Text('Quit', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -413,14 +373,50 @@ _persistStats();
     opponentTicker.dispose();
     restartTimer?.cancel();
     disconnectTimer?.cancel();
+    _roomSub?.cancel();
     super.dispose();
   }
 
-  void _makeMove(int idx) {
-    if (board[idx] == '' && isMyTurn && winner == null) {
-      widget.socket.sendMove(idx);
-      setState(() => isMyTurn = false);
+  void _makeMove(int idx) async {
+    if (board[idx] == '' && isMyTurn && (winner == null || winner == '')) {
+      final newBoard = List<String>.from(board);
+      newBoard[idx] = widget.symbol;
+      final nextTurn = widget.symbol == 'X' ? 'O' : 'X';
+      final win = _checkWinner(newBoard);
+      final move = '${widget.symbol} -> ${_cellName(idx)}';
+      final newMoveHistory = List<String>.from(moveHistory)..add(move);
+      await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
+        'board': newBoard,
+        'currentTurn': nextTurn,
+        'winner': win ?? '',
+        'moveHistory': newMoveHistory,
+      });
+      // Local state will update via Firestore listener
     }
+  }
+
+  String? _checkWinner(List<String> b) {
+    const wins = [
+      [0, 1, 2], [3, 4, 5], [6, 7, 8],
+      [0, 3, 6], [1, 4, 7], [2, 5, 8],
+      [0, 4, 8], [2, 4, 6],
+    ];
+    for (var line in wins) {
+      final a = line[0], b1 = line[1], c = line[2];
+      if (b[a] != '' && b[a] == b[b1] && b[a] == b[c]) {
+        return b[a];
+      }
+    }
+    if (!b.contains('')) return 'draw';
+    return null;
+  }
+
+  String _cellName(int idx) {
+    // Returns a human-readable cell name, e.g. A1, B2, etc.
+    final row = idx ~/ 3;
+    final col = idx % 3;
+    final rowChar = String.fromCharCode('A'.codeUnitAt(0) + row);
+    return '$rowChar${col + 1}';
   }
 
   Widget _buildCell(int i) {
@@ -432,20 +428,15 @@ _persistStats();
 
     return GestureDetector(
       onTap: () => _makeMove(i),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+      child: Container(
         decoration: BoxDecoration(
           color: color.withOpacity(0.2),
           border: Border.all(color: Colors.black26),
         ),
         child: Center(
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child: Text(
-              board[i],
-              key: ValueKey(board[i]),
-              style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: color),
-            ),
+          child: Text(
+            board[i],
+            style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: color),
           ),
         ),
       ),
@@ -461,13 +452,50 @@ _persistStats();
       return const Text("🎉 You won!", style: TextStyle(fontSize: 22));
     } else if (winner == 'draw') {
       return const Text("It's a draw 🤝", style: TextStyle(fontSize: 22));
-    } else if (winner != null) {
+    } else if (winner != null && winner != '' && winner != 'draw') {
       return const Text("You lost 💔", style: TextStyle(fontSize: 22));
     }
-    return Text(
-      isMyTurn ? "Your turn (${widget.symbol})" : "${widget.opponent}'s turn",
-      style: const TextStyle(fontSize: 18),
-    );
+    if (isMyTurn) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 24),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.green.shade100,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.play_arrow, color: Colors.green, size: 28),
+            const SizedBox(width: 8),
+            Text(
+              'Your turn (${widget.symbol})',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.green),
+            ),
+          ],
+        ),
+      );
+    } else {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 24),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade100,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.hourglass_empty, color: Colors.orange, size: 28),
+            const SizedBox(width: 8),
+            Text(
+              "Waiting for opponent...",
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.orange),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   Widget _buildTimers() {
@@ -488,11 +516,13 @@ _persistStats();
         title: const Text('Move History'),
         content: SizedBox(
           width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: moveHistory.length,
-            itemBuilder: (_, i) => ListTile(title: Text(moveHistory[i])),
-          ),
+          child: moveHistory.isEmpty
+              ? const Text('No moves yet.')
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: moveHistory.length,
+                  itemBuilder: (_, i) => ListTile(title: Text(moveHistory[i])),
+                ),
         ),
         actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
       ),
@@ -501,32 +531,75 @@ _persistStats();
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Tic Tac Toe"),
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _confirmBack),
-        actions: [
-          IconButton(icon: const Icon(Icons.history), onPressed: _showHistory),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: gameEnded ? () => widget.socket.requestRestart() : null),
-        ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _gameStatus(),
-            const SizedBox(height: 16),
-            _buildTimers(),
-            const SizedBox(height: 16),
-            AspectRatio(
-              aspectRatio: 1,
-              child: GridView.builder(
-                itemCount: 9,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3),
-                itemBuilder: (_, i) => _buildCell(i),
-              ),
+    return WillPopScope(
+      onWillPop: () async {
+        // Prevent system back navigation
+        return false;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text("Tic Tac Toe"),
+          automaticallyImplyLeading: false,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.exit_to_app, color: Colors.red),
+              tooltip: 'Quit Game',
+              onPressed: _showQuitDialog,
             ),
+            IconButton(icon: const Icon(Icons.history), onPressed: _showHistory),
+            IconButton(icon: const Icon(Icons.refresh), onPressed: gameEnded ? () => _restartGame() : null),
           ],
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _gameStatus(),
+              const SizedBox(height: 16),
+              _buildTimers(),
+              const SizedBox(height: 16),
+              AspectRatio(
+                aspectRatio: 1,
+                child: GridView.builder(
+                  itemCount: 9,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3),
+                  itemBuilder: (_, i) => _buildCell(i),
+                ),
+              ),
+              if (gameEnded && winner != null && winner != '' && winner != 'draw')
+                Padding(
+                  padding: const EdgeInsets.only(top: 24),
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Rematch'),
+                    onPressed: () async {
+                      await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
+                        'board': List.filled(9, ''),
+                        'currentTurn': 'X',
+                        'winner': '',
+                        'moveHistory': [],
+                      });
+                    },
+                  ),
+                ),
+              if (gameEnded && winner == 'draw')
+                Padding(
+                  padding: const EdgeInsets.only(top: 24),
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Rematch'),
+                    onPressed: () async {
+                      await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
+                        'board': List.filled(9, ''),
+                        'currentTurn': 'X',
+                        'winner': '',
+                        'moveHistory': [],
+                      });
+                    },
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

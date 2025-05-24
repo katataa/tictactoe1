@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'features/auth/home/home_screen.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/auth/presentation/verify_email_screen.dart';
+import 'features/auth/game/presentation/lobby_screen.dart';
+import 'features/auth/game/presentation/invite_listener.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +16,7 @@ void main() async {
     print("🔥 Firebase init failed: $e");
   }
   runApp(const ProviderScope(child: InitApp()));
+  startGlobalInviteListener();
 }
 
 class InitApp extends StatelessWidget {
@@ -22,6 +25,7 @@ class InitApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: globalNavigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'Join The Fun',
       theme: ThemeData(

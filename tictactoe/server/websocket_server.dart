@@ -87,27 +87,27 @@ void handleMessage(Player player, dynamic data) {
       broadcastOnlineUsers();
       break;
 
-case 'leave_game':
-  final gameId = msg['gameId'] as String?;
-  final session = activeGames[gameId];
-  if (session != null) {
-    final other = (session.playerX == player.id) ? session.playerO : session.playerX;
+    case 'leave_game':
+      final gameId = msg['gameId'] as String?;
+      final session = activeGames[gameId];
+      if (session != null) {
+        final other = (session.playerX == player.id) ? session.playerO : session.playerX;
 
-    // Notify the opponent that the player left voluntarily
-    players[other]?.socket.add(jsonEncode({
-      'type': 'player_left',
-      'voluntary': true,
-    }));
+        // Notify the opponent that the player left voluntarily
+        players[other]?.socket.add(jsonEncode({
+          'type': 'player_left',
+          'voluntary': true,
+        }));
 
-    players[other]?.inGameWith = null;
-    players[other]?.isInGame = false;
+        players[other]?.inGameWith = null;
+        players[other]?.isInGame = false;
 
-    activeGames.remove(gameId);
-  }
+        activeGames.remove(gameId);
+      }
 
-  player.inGameWith = null;
-  player.isInGame = false;
-  break;
+      player.inGameWith = null;
+      player.isInGame = false;
+      break;
 
     case 'invite':
       final to = msg['to'] as String?;
@@ -164,6 +164,20 @@ case 'leave_game':
       }
       break;
 
+    case 'decline_invite':
+      final fromName = msg['from'] as String?;
+      final inviter = players.values
+          .firstWhereOrNull((p) => p.username == fromName);
+      if (inviter != null) {
+        inviter.socket.add(jsonEncode({
+          'type': 'invite_declined',
+          'from': player.username,
+        }));
+        inviter.inGameWith = null;
+        player.inGameWith = null;
+      }
+      break;
+
     case 'ping':
       player.lastPing = DateTime.now();
       break;
@@ -202,21 +216,20 @@ case 'leave_game':
       }
       break;
 
-      case 'join_game':
-  final gameId = msg['gameId'] as String?;
-  if (gameId != null && activeGames.containsKey(gameId)) {
-    final session = activeGames[gameId]!;
-    if (session.playerX == player.id) {
-      player.inGameWith = session.playerO;
-      player.isInGame = true;
-    } else if (session.playerO == player.id) {
-      player.inGameWith = session.playerX;
-      player.isInGame = true;
-    }
-    print('🔁 Player ${player.id} joined game $gameId');
-  }
-  break;
-
+    case 'join_game':
+      final gameId = msg['gameId'] as String?;
+      if (gameId != null && activeGames.containsKey(gameId)) {
+        final session = activeGames[gameId]!;
+        if (session.playerX == player.id) {
+          player.inGameWith = session.playerO;
+          player.isInGame = true;
+        } else if (session.playerO == player.id) {
+          player.inGameWith = session.playerX;
+          player.isInGame = true;
+        }
+        print('🔁 Player ${player.id} joined game $gameId');
+      }
+      break;
 
     case 'restart_request':
       final gameId = msg['gameId'] as String?;
@@ -256,24 +269,21 @@ case 'leave_game':
       }
       break;
 
-      case 'restart_declined': 
-  final gameId = msg['gameId'] as String?;
-  final session = activeGames[gameId];
-  if (session != null) {
-    final other = (session.playerX == player.id)
-        ? session.playerO
-        : session.playerX;
-    players[other]?.socket.add(jsonEncode({
-      'type': 'restart_declined',
-      'gameId': gameId,
-    }));
-  }
-  break;
-
+    case 'restart_declined': 
+      final gameId = msg['gameId'] as String?;
+      final session = activeGames[gameId];
+      if (session != null) {
+        final other = (session.playerX == player.id)
+            ? session.playerO
+            : session.playerX;
+        players[other]?.socket.add(jsonEncode({
+          'type': 'restart_declined',
+          'gameId': gameId,
+        }));
+      }
+      break;
   }
 }
-
-
 
 void handleDisconnect(Player p) {
   print('❌ Player disconnected: ${p.id}');
@@ -308,7 +318,6 @@ void handleDisconnect(Player p) {
   players.remove(p.id);
   broadcastOnlineUsers();
 }
-
 
 void broadcastOnlineUsers() {
   final list = players.values

@@ -75,6 +75,7 @@ Future<void> reconnectToLobby(String username) async {
   
 
   void cancelInvite() {
+    if (!_connected) return;
     _channel.sink.add(jsonEncode({'type': 'cancel_invite'}));
   }
 
@@ -83,6 +84,13 @@ Future<void> reconnectToLobby(String username) async {
       'type': 'accept_invite',
       'from': from,
       'timeControl': timeControl,
+    }));
+  }
+
+  void declineInvite(String from) {
+    _channel.sink.add(jsonEncode({
+      'type': 'decline_invite',
+      'from': from,
     }));
   }
 
