@@ -381,7 +381,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           opponentEmail: '',
           symbol: myUsername == player1 ? 'X' : 'O',
           gameId: roomId,
-          timeControl: Duration(minutes: selectedTimeControl),
+          timeControl: Duration(minutes: selectedTimeControl), opponentUid: '',
         ),
       ),
     );
@@ -437,9 +437,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
     print('[LOBBY BUILD] Building LobbyScreen');
     final isSearch = _searchController.text.isNotEmpty;
     final searchQuery = _searchController.text.trim().toLowerCase();
-    final filteredUsers = isSearch
-        ? allUsers.where((u) => u['username'].toLowerCase().contains(searchQuery) || u['email'].toLowerCase().contains(searchQuery)).toList()
-        : allUsers;
+    final currentUserEmail = _decryptedEmail;
+
+final filteredUsers = isSearch
+    ? allUsers
+        .where((u) =>
+            u['email'] != currentUserEmail &&
+            (u['username'].toLowerCase().contains(searchQuery) ||
+             u['email'].toLowerCase().contains(searchQuery)))
+        .toList()
+    : allUsers.where((u) => u['email'] != currentUserEmail).toList();
+
     final list = filteredUsers.map((u) => u['username'] as String).toList();
 
     return Scaffold(

@@ -52,7 +52,7 @@ void startGlobalInviteListener() {
                         opponentEmail: '',
                         symbol: 'O',
                         gameId: roomId,
-                        timeControl: Duration(minutes: 5),
+                        timeControl: Duration(minutes: 5), opponentUid: '',
                       ),
                     ));
                   }

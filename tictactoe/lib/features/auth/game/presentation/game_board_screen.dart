@@ -7,6 +7,7 @@ class GameBoardScreen extends StatefulWidget {
   final String username;
   final String opponent;
   final String opponentEmail;
+  final String opponentUid;
   final String symbol;
   final String gameId;
   final Duration timeControl;
@@ -16,6 +17,7 @@ class GameBoardScreen extends StatefulWidget {
     required this.username,
     required this.opponent,
     required this.opponentEmail,
+    required this.opponentUid,
     required this.symbol,
     required this.gameId,
     this.timeControl = const Duration(minutes: 5),
@@ -104,7 +106,9 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Game ended or opponent left.')),
             );
-            Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+            Navigator.of(
+              context,
+            ).pushNamedAndRemoveUntil('/home', (route) => false);
           }
         });
       }
@@ -126,12 +130,29 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Game ended or cancelled.')),
             );
-            Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+            Navigator.of(
+              context,
+            ).pushNamedAndRemoveUntil('/home', (route) => false);
           }
         });
       }
       return;
     }
+    final rematch = data['rematchRequest'] as Map<String, dynamic>?;
+
+    if (rematch != null &&
+        rematch['to'] == FirebaseAuth.instance.currentUser?.uid &&
+        rematch['status'] == 'pending') {
+      _showRematchRequestDialog(); // receiver sees popup
+    }
+
+    if (rematch != null && rematch['status'] == 'accepted' && !gameEnded) {
+      _restartGame(); // restart game
+      FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
+        'rematchRequest': FieldValue.delete(),
+      });
+    }
+
     setState(() {
       board = List<String>.from(data['board'] ?? List.filled(9, ''));
       currentTurn = data['currentTurn'] ?? 'X';
@@ -139,16 +160,25 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
       winner = data['winner'];
       gameEnded = winner != null && winner != '';
       moveHistory = List<String>.from(data['moveHistory'] ?? []);
-      // Optionally sync timers here too
     });
+
     // Robust win/loss update: only increment if not already updated for this user in this game
-    if (gameEnded && !_statsUpdateInProgress && winner != null && winner != '' && winner != 'draw') {
+    if (gameEnded &&
+        !_statsUpdateInProgress &&
+        winner != null &&
+        winner != '' &&
+        winner != 'draw') {
       _statsUpdateInProgress = true;
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
-        final roomRef = FirebaseFirestore.instance.collection('rooms').doc(widget.gameId);
-        final statsUpdated = (data['statsUpdated'] ?? {}) as Map<String, dynamic>;
+        final userRef = FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid);
+        final roomRef = FirebaseFirestore.instance
+            .collection('rooms')
+            .doc(widget.gameId);
+        final statsUpdated =
+            (data['statsUpdated'] ?? {}) as Map<String, dynamic>;
         if (statsUpdated[user.uid] != true) {
           try {
             if (winner == widget.symbol) {
@@ -189,78 +219,142 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     restartTimer?.cancel();
   }
 
-  void _showRestartDialog() {
+  void _showRematchWaitingDialog() {
+    int secondsLeft = 30;
+    Timer? countdownTimer;
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Rematch Requested'),
-        content: CountdownText(seconds: 30, text: 'Accept within'),
-        actions: [
-          TextButton(
-            onPressed: () {
+      builder: (context) {
+        countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+          if (mounted) {
+            setState(() => secondsLeft--);
+            if (secondsLeft <= 0) {
               Navigator.of(context).pop();
-            },
-            child: const Text('Accept'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pop();
-            },
-            child: const Text('Decline'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: gameEnded ? _onRestartPressed : null,
-          ),
-        ],
-      ),
-    );
+              t.cancel();
+            }
+          }
+        });
 
-    restartTimer = Timer(const Duration(seconds: 30), () {
-      if (mounted) {
-        Navigator.of(context).pop();
-        Navigator.of(context).pop();
-      }
-    });
+        return StatefulBuilder(
+          builder:
+              (context, setState) => AlertDialog(
+                title: const Text('Waiting for opponent...'),
+                content: Text(
+                  'Rematch request sent.\nExpires in $secondsLeft seconds.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      countdownTimer?.cancel();
+                      Navigator.of(context).pop();
+                    },
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              ),
+        );
+      },
+    ).then((_) => countdownTimer?.cancel());
+  }
+
+  void _showRematchRequestDialog() {
+    int secondsLeft = 30;
+    Timer? countdown;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        countdown = Timer.periodic(const Duration(seconds: 1), (t) {
+          if (mounted) {
+            setState(() => secondsLeft--);
+            if (secondsLeft <= 0) {
+              FirebaseFirestore.instance
+                  .collection('rooms')
+                  .doc(widget.gameId)
+                  .update({'rematchRequest.status': 'declined'});
+              Navigator.of(context).pop();
+              t.cancel();
+            }
+          }
+        });
+
+        return StatefulBuilder(
+          builder:
+              (context, setState) => AlertDialog(
+                title: const Text('Rematch Requested'),
+                content: Text(
+                  'Do you accept the rematch?\nExpires in $secondsLeft seconds.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      FirebaseFirestore.instance
+                          .collection('rooms')
+                          .doc(widget.gameId)
+                          .update({'rematchRequest.status': 'declined'});
+                      countdown?.cancel();
+                      Navigator.of(context).pop();
+                    },
+                    child: const Text('Decline'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      FirebaseFirestore.instance
+                          .collection('rooms')
+                          .doc(widget.gameId)
+                          .update({'rematchRequest.status': 'accepted'});
+                      countdown?.cancel();
+                      Navigator.of(context).pop();
+                    },
+                    child: const Text('Accept'),
+                  ),
+                ],
+              ),
+        );
+      },
+    ).then((_) => countdown?.cancel());
   }
 
   void _onRestartPressed() {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Rematch Requested'),
-        content: const Text('Waiting for opponent to accept…'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-            child: const Text('Cancel'),
+      builder:
+          (_) => AlertDialog(
+            title: const Text('Rematch Requested'),
+            content: const Text('Waiting for opponent to accept…'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
   }
 
   void _showDeclinedDialog() {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Rematch Declined'),
-        content: const Text('Opponent declined. Returning to lobby...'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pop();
-            },
-            child: const Text('OK'),
+      builder:
+          (_) => AlertDialog(
+            title: const Text('Rematch Declined'),
+            content: const Text('Opponent declined. Returning to lobby...'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('OK'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
   }
 
@@ -268,102 +362,128 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Opponent Disconnected'),
-        content: const Text('Opponent did not return in 2 minutes. You win!'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pop();
-            },
-            child: const Text('OK'),
+      builder:
+          (_) => AlertDialog(
+            title: const Text('Opponent Disconnected'),
+            content: const Text(
+              'Opponent did not return in 2 minutes. You win!',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('OK'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
   }
 
   void _showQuitDialog() {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Quit Game?'),
-        content: const Text('Are you sure you want to quit? You will forfeit this match.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              print('[QUIT] Quit button pressed');
-              Navigator.of(context).pop();
-              final opponentSymbol = widget.symbol == 'X' ? 'O' : 'X';
-              final user = FirebaseAuth.instance.currentUser;
-              if (user != null) {
-                final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
-                final roomRef = FirebaseFirestore.instance.collection('rooms').doc(widget.gameId);
-                try {
-                  print('[QUIT] Updating room winner and gameEndedBy');
-                  await roomRef.update({
-                    'winner': opponentSymbol,
-                    'gameEndedBy': widget.username,
-                  });
-                } catch (e) {
-                  print('[QUIT][ERROR] Failed to update room: $e');
-                }
-                try {
-                  print('[QUIT] Deleting invites for this room');
-                  final invites = await FirebaseFirestore.instance.collection('invites').where('roomId', isEqualTo: widget.gameId).get();
-                  for (final doc in invites.docs) {
-                    await doc.reference.delete();
-                  }
-                } catch (e) {
-                  print('[QUIT][ERROR] Failed to delete invites: $e');
-                }
-                try {
-                  print('[QUIT] Updating stats if needed');
-                  final roomSnap = await roomRef.get();
-                  final data = roomSnap.data();
-                  if (data != null) {
-                    final statsUpdated = (data['statsUpdated'] ?? {}) as Map<String, dynamic>;
-                    if (statsUpdated[user.uid] != true) {
-                      try {
-                        if (opponentSymbol == widget.symbol) {
-                          await userRef.update({'wins': FieldValue.increment(1)});
-                        } else {
-                          await userRef.update({'losses': FieldValue.increment(1)});
-                        }
-                        await roomRef.update({'statsUpdated.${user.uid}': true});
-                      } catch (e) {
-                        print('[QUIT][ERROR] Failed to update stats: $e');
-                      }
+      builder:
+          (_) => AlertDialog(
+            title: const Text('Quit Game?'),
+            content: const Text(
+              'Are you sure you want to quit? You will forfeit this match.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  print('[QUIT] Quit button pressed');
+                  Navigator.of(context).pop();
+                  final opponentSymbol = widget.symbol == 'X' ? 'O' : 'X';
+                  final user = FirebaseAuth.instance.currentUser;
+                  if (user != null) {
+                    final userRef = FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(user.uid);
+                    final roomRef = FirebaseFirestore.instance
+                        .collection('rooms')
+                        .doc(widget.gameId);
+                    try {
+                      print('[QUIT] Updating room winner and gameEndedBy');
+                      await roomRef.update({
+                        'winner': opponentSymbol,
+                        'gameEndedBy': widget.username,
+                      });
+                    } catch (e) {
+                      print('[QUIT][ERROR] Failed to update room: $e');
                     }
+                    try {
+                      print('[QUIT] Deleting invites for this room');
+                      final invites =
+                          await FirebaseFirestore.instance
+                              .collection('invites')
+                              .where('roomId', isEqualTo: widget.gameId)
+                              .get();
+                      for (final doc in invites.docs) {
+                        await doc.reference.delete();
+                      }
+                    } catch (e) {
+                      print('[QUIT][ERROR] Failed to delete invites: $e');
+                    }
+                    try {
+                      print('[QUIT] Updating stats if needed');
+                      final roomSnap = await roomRef.get();
+                      final data = roomSnap.data();
+                      if (data != null) {
+                        final statsUpdated =
+                            (data['statsUpdated'] ?? {})
+                                as Map<String, dynamic>;
+                        if (statsUpdated[user.uid] != true) {
+                          try {
+                            if (opponentSymbol == widget.symbol) {
+                              await userRef.update({
+                                'wins': FieldValue.increment(1),
+                              });
+                            } else {
+                              await userRef.update({
+                                'losses': FieldValue.increment(1),
+                              });
+                            }
+                            await roomRef.update({
+                              'statsUpdated.${user.uid}': true,
+                            });
+                          } catch (e) {
+                            print('[QUIT][ERROR] Failed to update stats: $e');
+                          }
+                        }
+                      }
+                    } catch (e) {
+                      print(
+                        '[QUIT][ERROR] Failed to get room or update stats: $e',
+                      );
+                    }
+                    try {
+                      print('[QUIT] Waiting 2 seconds before deleting room');
+                      await Future.delayed(const Duration(seconds: 2));
+                      print('[QUIT] Deleting room');
+                      await roomRef.delete();
+                    } catch (e) {
+                      print('[QUIT][ERROR] Failed to delete room: $e');
+                    }
+                    if (mounted) {
+                      print('[QUIT] Navigating to home/lobby');
+                      Navigator.of(
+                        context,
+                      ).pushNamedAndRemoveUntil('/home', (route) => false);
+                    }
+                  } else {
+                    print('[QUIT][ERROR] No user found');
                   }
-                } catch (e) {
-                  print('[QUIT][ERROR] Failed to get room or update stats: $e');
-                }
-                try {
-                  print('[QUIT] Waiting 2 seconds before deleting room');
-                  await Future.delayed(const Duration(seconds: 2));
-                  print('[QUIT] Deleting room');
-                  await roomRef.delete();
-                } catch (e) {
-                  print('[QUIT][ERROR] Failed to delete room: $e');
-                }
-                if (mounted) {
-                  print('[QUIT] Navigating to home/lobby');
-                  Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
-                }
-              } else {
-                print('[QUIT][ERROR] No user found');
-              }
-            },
-            child: const Text('Quit', style: TextStyle(color: Colors.red)),
+                },
+                child: const Text('Quit', style: TextStyle(color: Colors.red)),
+              ),
+            ],
           ),
-        ],
-      ),
     );
   }
 
@@ -385,21 +505,29 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
       final win = _checkWinner(newBoard);
       final move = '${widget.symbol} -> ${_cellName(idx)}';
       final newMoveHistory = List<String>.from(moveHistory)..add(move);
-      await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
-        'board': newBoard,
-        'currentTurn': nextTurn,
-        'winner': win ?? '',
-        'moveHistory': newMoveHistory,
-      });
+      await FirebaseFirestore.instance
+          .collection('rooms')
+          .doc(widget.gameId)
+          .update({
+            'board': newBoard,
+            'currentTurn': nextTurn,
+            'winner': win ?? '',
+            'moveHistory': newMoveHistory,
+          });
       // Local state will update via Firestore listener
     }
   }
 
   String? _checkWinner(List<String> b) {
     const wins = [
-      [0, 1, 2], [3, 4, 5], [6, 7, 8],
-      [0, 3, 6], [1, 4, 7], [2, 5, 8],
-      [0, 4, 8], [2, 4, 6],
+      [0, 1, 2],
+      [3, 4, 5],
+      [6, 7, 8],
+      [0, 3, 6],
+      [1, 4, 7],
+      [2, 5, 8],
+      [0, 4, 8],
+      [2, 4, 6],
     ];
     for (var line in wins) {
       final a = line[0], b1 = line[1], c = line[2];
@@ -420,9 +548,10 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   }
 
   Widget _buildCell(int i) {
-    final color = board[i] == 'X'
-        ? Colors.deepPurple
-        : board[i] == 'O'
+    final color =
+        board[i] == 'X'
+            ? Colors.deepPurple
+            : board[i] == 'O'
             ? Colors.pink
             : Colors.grey.shade300;
 
@@ -436,7 +565,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
         child: Center(
           child: Text(
             board[i],
-            style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: color),
+            style: TextStyle(
+              fontSize: 48,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
         ),
       ),
@@ -445,8 +578,10 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
 
   Widget _gameStatus() {
     if (opponentDisconnected && !gameEnded) {
-      return Text("Opponent disconnected… $disconnectSecondsLeft s",
-          style: const TextStyle(fontSize: 18, color: Colors.red));
+      return Text(
+        "Opponent disconnected… $disconnectSecondsLeft s",
+        style: const TextStyle(fontSize: 18, color: Colors.red),
+      );
     }
     if (winner == widget.symbol) {
       return const Text("🎉 You won!", style: TextStyle(fontSize: 22));
@@ -470,7 +605,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
             const SizedBox(width: 8),
             Text(
               'Your turn (${widget.symbol})',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.green),
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.green,
+              ),
             ),
           ],
         ),
@@ -490,7 +629,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
             const SizedBox(width: 8),
             Text(
               "Waiting for opponent...",
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.orange),
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.orange,
+              ),
             ),
           ],
         ),
@@ -499,12 +642,29 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   }
 
   Widget _buildTimers() {
-    String fmt(Duration d) => '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+    String fmt(Duration d) =>
+        '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        Column(children: [const Text('Your time'), Text(fmt(myTime), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold))]),
-        Column(children: [const Text('Opponent time'), Text(fmt(opponentTime), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold))]),
+        Column(
+          children: [
+            const Text('Your time'),
+            Text(
+              fmt(myTime),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        Column(
+          children: [
+            const Text('Opponent time'),
+            Text(
+              fmt(opponentTime),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -512,20 +672,28 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
   void _showHistory() {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Move History'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: moveHistory.isEmpty
-              ? const Text('No moves yet.')
-              : ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: moveHistory.length,
-                  itemBuilder: (_, i) => ListTile(title: Text(moveHistory[i])),
-                ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
-      ),
+      builder:
+          (_) => AlertDialog(
+            title: const Text('Move History'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child:
+                  moveHistory.isEmpty
+                      ? const Text('No moves yet.')
+                      : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: moveHistory.length,
+                        itemBuilder:
+                            (_, i) => ListTile(title: Text(moveHistory[i])),
+                      ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
     );
   }
 
@@ -546,8 +714,10 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
               tooltip: 'Quit Game',
               onPressed: _showQuitDialog,
             ),
-            IconButton(icon: const Icon(Icons.history), onPressed: _showHistory),
-            IconButton(icon: const Icon(Icons.refresh), onPressed: gameEnded ? () => _restartGame() : null),
+            IconButton(
+              icon: const Icon(Icons.history),
+              onPressed: _showHistory,
+            ),
           ],
         ),
         body: Center(
@@ -562,26 +732,37 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
                 aspectRatio: 1,
                 child: GridView.builder(
                   itemCount: 9,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                  ),
                   itemBuilder: (_, i) => _buildCell(i),
                 ),
               ),
-              if (gameEnded && winner != null && winner != '' && winner != 'draw')
+              if (gameEnded && winner != null && winner != '')
                 Padding(
                   padding: const EdgeInsets.only(top: 24),
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.refresh),
                     label: const Text('Rematch'),
                     onPressed: () async {
-                      await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
-                        'board': List.filled(9, ''),
-                        'currentTurn': 'X',
-                        'winner': '',
-                        'moveHistory': [],
-                      });
+                      final user = FirebaseAuth.instance.currentUser;
+                      if (user != null) {
+                        await FirebaseFirestore.instance
+                            .collection('rooms')
+                            .doc(widget.gameId)
+                            .update({
+                              'rematchRequest': {
+                                'from': user.uid,
+                                'to': widget.opponentUid,
+                                'status': 'pending',
+                              },
+                            });
+                        _showRematchWaitingDialog();
+                      }
                     },
                   ),
                 ),
+
               if (gameEnded && winner == 'draw')
                 Padding(
                   padding: const EdgeInsets.only(top: 24),
@@ -589,12 +770,20 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
                     icon: const Icon(Icons.refresh),
                     label: const Text('Rematch'),
                     onPressed: () async {
-                      await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
-                        'board': List.filled(9, ''),
-                        'currentTurn': 'X',
-                        'winner': '',
-                        'moveHistory': [],
-                      });
+                      final user = FirebaseAuth.instance.currentUser;
+                      if (user != null) {
+                        await FirebaseFirestore.instance
+                            .collection('rooms')
+                            .doc(widget.gameId)
+                            .update({
+                              'rematchRequest': {
+                                'from': user.uid,
+                                'to': widget.opponentUid,
+                                'status': 'pending',
+                              },
+                            });
+                        _showRematchWaitingDialog();
+                      }
                     },
                   ),
                 ),
@@ -611,7 +800,8 @@ class Ticker {
   Timer? _timer;
   Duration _elapsed = Duration.zero;
   Ticker(this.onTick);
-  void start() => _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+  void start() =>
+      _timer = Timer.periodic(const Duration(seconds: 1), (t) {
         _elapsed += const Duration(seconds: 1);
         onTick(_elapsed);
       });
@@ -621,7 +811,8 @@ class Ticker {
 class CountdownText extends StatefulWidget {
   final int seconds;
   final String text;
-  const CountdownText({Key? key, required this.seconds, required this.text}) : super(key: key);
+  const CountdownText({Key? key, required this.seconds, required this.text})
+    : super(key: key);
 
   @override
   State<CountdownText> createState() => _CountdownTextState();
@@ -652,6 +843,9 @@ class _CountdownTextState extends State<CountdownText> {
 
   @override
   Widget build(BuildContext context) {
-    return Text('${widget.text}: $secondsLeft', style: const TextStyle(fontSize: 16));
+    return Text(
+      '${widget.text}: $secondsLeft',
+      style: const TextStyle(fontSize: 16),
+    );
   }
 }
