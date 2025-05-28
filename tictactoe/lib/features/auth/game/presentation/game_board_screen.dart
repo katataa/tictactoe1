@@ -60,25 +60,26 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     myTime = widget.timeControl;
     opponentTime = widget.timeControl;
 
-    myTicker = Ticker((_) {
-      if (!gameEnded && isMyTurn && mounted) {
-        if (myTime.inSeconds > 0) {
-          setState(() => myTime -= const Duration(seconds: 1));
-        } else {
-          _endGame(lost: true);
-        }
-      }
-    });
+   myTicker = Ticker(() {
+  if (!gameEnded && isMyTurn && mounted) {
+    if (myTime.inSeconds > 0) {
+      setState(() => myTime -= const Duration(seconds: 1));
+    } else {
+      _endGame(lost: true);
+    }
+  }
+});
 
-    opponentTicker = Ticker((_) {
-      if (!gameEnded && !isMyTurn && mounted && !opponentDisconnected) {
-        if (opponentTime.inSeconds > 0) {
-          setState(() => opponentTime -= const Duration(seconds: 1));
-        } else {
-          _endGame(lost: false);
-        }
-      }
-    });
+opponentTicker = Ticker(() {
+  if (!gameEnded && !isMyTurn && mounted && !opponentDisconnected) {
+    if (opponentTime.inSeconds > 0) {
+      setState(() => opponentTime -= const Duration(seconds: 1));
+    } else {
+      _endGame(lost: false);
+    }
+  }
+});
+
 
     myTicker.start();
     opponentTicker.start();
@@ -138,7 +139,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
       }
       return;
     }
-    final rematch = data['rematchRequest'] as Map<String, dynamic>?;
+    final rawRematch = data['rematchRequest'];
+    final Map<String, dynamic>? rematch = rawRematch != null
+    ? Map<String, dynamic>.from(rawRematch as Map<dynamic, dynamic>)
+    : null;
+
 
     if (rematch != null &&
         rematch['to'] == FirebaseAuth.instance.currentUser?.uid &&
@@ -146,17 +151,86 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
       _showRematchRequestDialog(); // receiver sees popup
     }
 
-    if (rematch != null && rematch['status'] == 'accepted' && !gameEnded) {
-      _restartGame(); // restart game
-      FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
-        'rematchRequest': FieldValue.delete(),
-      });
+   if (rematch != null && rematch['status'] == 'accepted') {
+  final newBoard = List.filled(9, '');
+  final int minutes =
+      rematch['timeControlMinutes'] ?? (data['timeControlMinutes'] ?? 5);
+  final newTimeControl = Duration(minutes: minutes);
+
+  await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
+    'board': newBoard,
+    'currentTurn': 'X',
+    'winner': '',
+    'moveHistory': [],
+    'rematchRequest': FieldValue.delete(),
+    'status': 'active',
+    'timeControlMinutes': minutes,
+  });
+
+  if (mounted) {
+    setState(() {
+      board = newBoard;
+      currentTurn = 'X';
+      winner = null;
+      moveHistory.clear();
+      gameEnded = false;
+      isMyTurn = (widget.symbol == 'X');
+      myTime = newTimeControl;
+      opponentTime = newTimeControl;
+    });
+
+    // Reset tickers
+    myTicker.pause();
+    opponentTicker.pause();
+    if (isMyTurn) {
+      myTicker.start();
+    } else {
+      opponentTicker.start();
     }
+  }
+}
+
+    if (rematch != null && rematch['status'] == 'declined') {
+  // Clear rematchRequest field
+  await FirebaseFirestore.instance
+      .collection('rooms')
+      .doc(widget.gameId)
+      .update({'rematchRequest': FieldValue.delete()});
+
+  // Navigate both players to lobby after showing alert
+  Future.microtask(() async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Rematch Declined'),
+        content: const Text('Opponent declined the rematch.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) {
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+    }
+  });
+}
+
 
     setState(() {
       board = List<String>.from(data['board'] ?? List.filled(9, ''));
       currentTurn = data['currentTurn'] ?? 'X';
       isMyTurn = (currentTurn == widget.symbol);
+      if (isMyTurn) {
+  myTicker.start();
+  opponentTicker.pause();
+} else {
+  opponentTicker.start();
+  myTicker.pause();
+}
       winner = data['winner'];
       gameEnded = winner != null && winner != '';
       moveHistory = List<String>.from(data['moveHistory'] ?? []);
@@ -259,64 +333,68 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     ).then((_) => countdownTimer?.cancel());
   }
 
-  void _showRematchRequestDialog() {
-    int secondsLeft = 30;
-    Timer? countdown;
+void _showRematchRequestDialog() {
+  int secondsLeft = 30;
+  Timer? countdown;
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        countdown = Timer.periodic(const Duration(seconds: 1), (t) {
-          if (mounted) {
-            setState(() => secondsLeft--);
-            if (secondsLeft <= 0) {
-              FirebaseFirestore.instance
-                  .collection('rooms')
-                  .doc(widget.gameId)
-                  .update({'rematchRequest.status': 'declined'});
-              Navigator.of(context).pop();
-              t.cancel();
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setState) {
+          countdown ??= Timer.periodic(const Duration(seconds: 1), (t) {
+            if (mounted) {
+              setState(() {
+                secondsLeft--;
+              });
+              if (secondsLeft <= 0) {
+                FirebaseFirestore.instance
+                    .collection('rooms')
+                    .doc(widget.gameId)
+                    .update({'rematchRequest.status': 'declined'});
+                Navigator.of(context).pop();
+                t.cancel();
+              }
             }
-          }
-        });
+          });
 
-        return StatefulBuilder(
-          builder:
-              (context, setState) => AlertDialog(
-                title: const Text('Rematch Requested'),
-                content: Text(
-                  'Do you accept the rematch?\nExpires in $secondsLeft seconds.',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () {
-                      FirebaseFirestore.instance
-                          .collection('rooms')
-                          .doc(widget.gameId)
-                          .update({'rematchRequest.status': 'declined'});
-                      countdown?.cancel();
-                      Navigator.of(context).pop();
-                    },
-                    child: const Text('Decline'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () {
-                      FirebaseFirestore.instance
-                          .collection('rooms')
-                          .doc(widget.gameId)
-                          .update({'rematchRequest.status': 'accepted'});
-                      countdown?.cancel();
-                      Navigator.of(context).pop();
-                    },
-                    child: const Text('Accept'),
-                  ),
-                ],
+          return AlertDialog(
+            title: const Text('Rematch Requested'),
+            content: Text(
+              'Do you accept the rematch?\nExpires in $secondsLeft seconds.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  FirebaseFirestore.instance
+                      .collection('rooms')
+                      .doc(widget.gameId)
+                      .update({'rematchRequest.status': 'declined'});
+                  countdown?.cancel();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Decline'),
               ),
-        );
-      },
-    ).then((_) => countdown?.cancel());
-  }
+              ElevatedButton(
+                onPressed: () {
+                  FirebaseFirestore.instance
+                      .collection('rooms')
+                      .doc(widget.gameId)
+                      .update({'rematchRequest.status': 'accepted'});
+                  countdown?.cancel();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('Accept'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  ).then((_) => countdown?.cancel());
+}
+
 
   void _onRestartPressed() {
     showDialog(
@@ -755,6 +833,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
                                 'from': user.uid,
                                 'to': widget.opponentUid,
                                 'status': 'pending',
+                                'timeControlMinutes': widget.timeControl.inMinutes,
                               },
                             });
                         _showRematchWaitingDialog();
@@ -796,16 +875,23 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
 }
 
 class Ticker {
-  final void Function(Duration) onTick;
+  final void Function() onTick;
   Timer? _timer;
-  Duration _elapsed = Duration.zero;
+
   Ticker(this.onTick);
-  void start() =>
-      _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-        _elapsed += const Duration(seconds: 1);
-        onTick(_elapsed);
-      });
-  void dispose() => _timer?.cancel();
+
+  void start() {
+    _timer ??= Timer.periodic(const Duration(seconds: 1), (_) => onTick());
+  }
+
+  void pause() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  void dispose() {
+    pause();
+  }
 }
 
 class CountdownText extends StatefulWidget {

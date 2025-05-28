@@ -109,7 +109,7 @@ class _LifecycleWatcherState extends State<LifecycleWatcher> with WidgetsBinding
       });
     }
   }
-
+  
   @override
   Widget build(BuildContext context) => widget.child;
 }

@@ -201,22 +201,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     final roomId = data['roomId'] as String?;
     if (accept) {
-      print('[INVITE ACCEPTED] from: ${data['fromUsername']}');
-      if (roomId != null) {
-        try {
-          await FirebaseFirestore.instance.collection('rooms').doc(roomId).update({
-            'status': 'active',
-            'joined': FieldValue.arrayUnion([FirebaseAuth.instance.currentUser!.uid]),
-          });
-          print('[ROOM ACTIVATED] id: $roomId');
-          _listenToRoom(roomId);
-        } catch (e) {
-          print('[ROOM ACTIVATION ERROR] $e');
-        }
-      }
-      await inviteRef.update({'status': 'accepted'});
-      Navigator.pop(context);
-    } else {
+  print('[INVITE ACCEPTED] from: ${data['fromUsername']}');
+  if (roomId != null) {
+    try {
+      // Reset the room to start fresh
+      await FirebaseFirestore.instance.collection('rooms').doc(roomId).update({
+        'status': 'active',
+        'board': List.filled(9, ''),
+        'moveHistory': [],
+        'currentTurn': 'X',
+        'winner': '',
+        'rematchRequest': FieldValue.delete(),
+        'joined': FieldValue.arrayUnion([FirebaseAuth.instance.currentUser!.uid]),
+      });
+      print('[ROOM ACTIVATED AND RESET] id: $roomId');
+
+      _listenToRoom(roomId);
+    } catch (e) {
+      print('[ROOM ACTIVATION ERROR] $e');
+    }
+  }
+
+  await inviteRef.update({'status': 'accepted'});
+  Navigator.pop(context);
+}
+ else {
       print('[INVITE DECLINED] from: ${data['fromUsername']}');
       if (roomId != null) {
         try {
@@ -249,6 +258,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         'createdAt': FieldValue.serverTimestamp(),
         'board': List.filled(9, ''),
         'currentTurn': 'X',
+        'timeControlMinutes': selectedTimeControl,
       });
       print('[ROOM CREATED] id: ${roomRef.id}, players: $player1Username & $player2Username');
       return roomRef.id;
@@ -289,6 +299,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // Create room immediately
     final roomId = await _createRoom(u.uid, toUid, decryptedMyUsername, toUsername);
 
+    await Future.delayed(const Duration(milliseconds: 300));
+
     final inviteDoc = await FirebaseFirestore.instance.collection('invites').add({
       'fromUid': u.uid,
       'toUid': toUid,
@@ -296,6 +308,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       'toUsername': toUsername,
       'status': 'pending',
       'roomId': roomId,
+      'timeControl': selectedTimeControl,
       'createdAt': FieldValue.serverTimestamp(),
     });
     print('[INVITE] Invite document created in Firestore');
@@ -368,24 +381,41 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
   }
 
-  void _goToRoom(String roomId, String player1, String player2) {
-    final myUsername = _decryptedUsername;
-    final opponent = myUsername == player1 ? player2 : player1;
-    print('[USER JOINED ROOM] username: $myUsername, roomId: $roomId');
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => GameBoardScreen(
-          username: myUsername,
-          opponent: opponent,
-          opponentEmail: '',
-          symbol: myUsername == player1 ? 'X' : 'O',
-          gameId: roomId,
-          timeControl: Duration(minutes: selectedTimeControl), opponentUid: '',
-        ),
-      ),
-    );
-  }
+void _goToRoom(String roomId, String player1, String player2) async {
+  final myUsername = _decryptedUsername;
+  final opponent = myUsername == player1 ? player2 : player1;
+
+  final roomDoc = await FirebaseFirestore.instance.collection('rooms').doc(roomId).get();
+  final data = roomDoc.data();
+  if (data == null) return;
+
+  final mySymbol = myUsername == player1 ? 'X' : 'O';
+  final opponentUid = myUsername == player1
+      ? data['player2Uid']
+      : data['player1Uid'];
+
+  print('[USER JOINED ROOM] username: $myUsername, roomId: $roomId, opponentUid: $opponentUid');
+
+final minutes = data['timeControlMinutes'] ?? selectedTimeControl;
+final Duration timeControl = Duration(minutes: minutes);
+
+ Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (_) => GameBoardScreen(
+      username: myUsername,
+      opponent: opponent,
+      opponentEmail: '',
+      opponentUid: opponentUid,
+      symbol: mySymbol,
+      gameId: roomId,
+      timeControl: timeControl,
+    ),
+  ),
+);
+
+}
+
 
   Future<void> _endRoom(String roomId) async {
     print('[ROOM END REQUESTED] id: $roomId');
