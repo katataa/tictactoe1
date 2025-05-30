@@ -5,6 +5,7 @@ import '../../auth/presentation/verify_email_screen.dart';
 import '../game/presentation/lobby_screen.dart';
 import '../game/presentation/profile_screen.dart';
 import '../game/data/websocket_service.dart';
+import '../data/auth_repository.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -46,7 +47,9 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () async {
               Navigator.pop(ctx);
               WebSocketService().disconnect();
-              await FirebaseAuth.instance.signOut();
+              final _authRepo = AuthRepository();
+await _authRepo.signOut();
+
               if (!mounted) return;
               Navigator.pushReplacementNamed(context, '/login');
             },

@@ -13,13 +13,6 @@ class AuthRepository {
     );
     await result.user!.sendEmailVerification();
 
-    // TEMPORARY WRITE for debugging (optional)
-    await _firestore.collection('users').doc(result.user!.uid).set({
-      'username': username,
-      'email': email,
-      'createdAt': Timestamp.now(),
-    });
-
     return result.user;
   }
 
@@ -43,10 +36,16 @@ class AuthRepository {
   });
 }
 
-  Future<User?> signIn(String email, String password) async {
-    final result = await _auth.signInWithEmailAndPassword(email: email, password: password);
-    return result.user;
-  }
+ Future<User?> signIn(String email, String password) async {
+  final result = await _auth.signInWithEmailAndPassword(email: email, password: password);
+
+  await _firestore.collection('users').doc(result.user!.uid).update({
+    'isOnline': true,
+  });
+
+  return result.user;
+}
+
 
   Future<void> sendVerificationEmail() async {
     await _auth.currentUser?.sendEmailVerification();
@@ -67,9 +66,17 @@ class AuthRepository {
     await _auth.sendPasswordResetEmail(email: email);
   }
 
-  Future<void> signOut() async {
-    await _auth.signOut();
+Future<void> signOut() async {
+  final uid = _auth.currentUser?.uid;
+
+  if (uid != null) {
+    await _firestore.collection('users').doc(uid).update({
+      'isOnline': false,
+    });
   }
+
+  await _auth.signOut();
+}
 
   User? get currentUser => _auth.currentUser;
 }
