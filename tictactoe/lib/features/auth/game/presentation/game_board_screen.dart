@@ -286,13 +286,18 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     }
   }
 
-  void _endGame({required bool lost}) {
-    setState(() {
-      winner = lost ? (widget.symbol == 'X' ? 'O' : 'X') : widget.symbol;
-      gameEnded = true;
-    });
-    activeTimer?.cancel();
-  }
+  void _endGame({required bool lost}) async {
+  final mySymbol = widget.symbol;
+  final winnerSymbol = lost ? (mySymbol == 'X' ? 'O' : 'X') : mySymbol;
+
+  await FirebaseFirestore.instance
+      .collection('rooms')
+      .doc(widget.gameId)
+      .update({'winner': winnerSymbol});
+
+  activeTimer?.cancel();
+}
+
 
   void _showRematchWaitingDialog() {
     int secondsLeft = 30;

@@ -16,7 +16,7 @@ class AuthRepository {
     return result.user;
   }
 
- Future<void> saveUser({
+Future<void> saveUser({
   required String uid,
   required String username,
   required String email,
@@ -24,15 +24,16 @@ class AuthRepository {
   final encryptedUsername = await EncryptionHelper.encrypt(username);
   final encryptedEmail = await EncryptionHelper.encrypt(email);
 
-  await _firestore.collection('users').doc(uid).set({
+  await FirebaseFirestore.instance.collection('users').doc(uid).set({
     'username': encryptedUsername,
-    'email': encryptedEmail,
     'searchUsername': username.toLowerCase(),
+    'email': encryptedEmail,
     'searchEmail': email.toLowerCase(),
-    'createdAt': Timestamp.now(),
     'avatar': 'avatar1.png',
     'wins': 0,
     'losses': 0,
+    'isOnline': true,
+    'createdAt': FieldValue.serverTimestamp(),
   });
 }
 

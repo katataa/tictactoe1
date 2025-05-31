@@ -6,6 +6,8 @@ import '../game/presentation/lobby_screen.dart';
 import '../game/presentation/profile_screen.dart';
 import '../game/data/websocket_service.dart';
 import '../data/auth_repository.dart';
+import '../../../core/encryption_helper.dart';
+
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,17 +25,21 @@ class _HomeScreenState extends State<HomeScreen> {
     loadUsername();
   }
 
-  Future<void> loadUsername() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      final snapshot = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-      if (mounted) {
+Future<void> loadUsername() async {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user != null) {
+    final snapshot = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+
+    final plainUsername = snapshot.data()?['searchUsername'];
+
+    if (mounted) {
       setState(() {
-        username = snapshot.data()?['username'] ?? '';
+        username = plainUsername ?? '[No username]';
       });
-      }
     }
   }
+}
+
 
   void confirmSignOut() {
     showDialog(

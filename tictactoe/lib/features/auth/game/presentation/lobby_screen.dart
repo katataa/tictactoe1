@@ -54,14 +54,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _profileSub = FirebaseFirestore.instance.collection('users').doc(u.uid).snapshots().listen((doc) async {
       final data = doc.data();
       if (data != null) {
-        final decryptedUsername = await EncryptionHelper.decrypt(data['username']);
-        final decryptedEmail = await EncryptionHelper.decrypt(data['email']);
+        final plainUsername = data['searchUsername'] ?? '[No username]';
+        final decryptedEmail = data['searchEmail'] ?? '';
         if (mounted) {
           setState(() {
             avatar = data['avatar'] ?? avatar;
             wins = data['wins'] ?? wins;
             losses = data['losses'] ?? losses;
-            _decryptedUsername = decryptedUsername;
+            _decryptedUsername = plainUsername;
             _decryptedEmail = decryptedEmail;
           });
         }
@@ -69,30 +69,48 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
   }
 
-  void _listenToUsers() {
-    _usersSub = FirebaseFirestore.instance.collection('users').snapshots().listen((snapshot) async {
-      final all = <Map<String, dynamic>>[];
-      final online = <String>[];
-      for (var doc in snapshot.docs) {
-        try {
-          final data = doc.data();
-          if (!data.containsKey('username') || !data.containsKey('email')) continue;
-          final decryptedUsername = await EncryptionHelper.decrypt(data['username']);
-          final decryptedEmail = await EncryptionHelper.decrypt(data['email']);
-          all.add({'username': decryptedUsername, 'email': decryptedEmail, 'isOnline': data['isOnline'] ?? false});
-          if (data['isOnline'] == true) online.add(decryptedUsername);
-        } catch (e) {
-          debugPrint('Decryption failed for user: $e');
-        }
-      }
-      if (mounted) {
-        setState(() {
-          allUsers = all;
-          onlineUsers = online;
+void _listenToUsers() {
+  final myUid = FirebaseAuth.instance.currentUser?.uid;
+
+  _usersSub = FirebaseFirestore.instance.collection('users').snapshots().listen((snapshot) async {
+    final all = <Map<String, dynamic>>[];
+    final online = <String>[];
+
+    for (var doc in snapshot.docs) {
+      if (doc.id == myUid) continue; // 👈 skip current user's document
+
+      try {
+        final data = doc.data();
+        if (!data.containsKey('username') || !data.containsKey('email')) continue;
+
+        String decryptedUsername;
+        String decryptedEmail;
+
+       decryptedUsername = data['searchUsername'] ?? '[Unknown]';
+
+        decryptedEmail = data['searchEmail'] ?? '';
+
+        all.add({
+          'username': decryptedUsername,
+          'email': decryptedEmail,
+          'isOnline': data['isOnline'] ?? false,
         });
+
+        if (data['isOnline'] == true) online.add(decryptedUsername);
+      } catch (e) {
+        debugPrint('[USER LOOP ERROR] $e');
       }
-    });
-  }
+    }
+
+    if (mounted) {
+      setState(() {
+        allUsers = all;
+        onlineUsers = online;
+      });
+    }
+  });
+}
+
 
   void _listenToInvites() {
     print('[INVITE LISTENER] _listenToInvites called');
@@ -284,10 +302,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final decryptedMyUsername = await EncryptionHelper.decrypt(myData['username']);
     final toUsername = user['username'];
     final toDoc = await FirebaseFirestore.instance
-        .collection('users')
-        .where('username', isEqualTo: toUsername)
-        .limit(1)
-        .get();
+    .collection('users')
+    .where('searchUsername', isEqualTo: toUsername.toLowerCase())
+    .limit(1)
+    .get();
     if (toDoc.docs.isEmpty) {
       print('[INVITE ERROR] No user found for username: $toUsername');
       return;

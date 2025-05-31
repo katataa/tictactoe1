@@ -24,7 +24,10 @@ class _LoginScreenState extends State<LoginScreen> {
   try {
     final user = await _authRepo.signIn(emailController.text, passwordController.text);
     if (user != null && _authRepo.isEmailVerified()) {
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomeScreen()));
+      Navigator.pushReplacement(
+  context,
+  MaterialPageRoute(builder: (_) => const HomeScreen()),
+);
     } else {
       showSnack("Please verify your email before logging in.");
     }
