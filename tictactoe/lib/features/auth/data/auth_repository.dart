@@ -38,13 +38,20 @@ Future<void> saveUser({
 }
 
  Future<User?> signIn(String email, String password) async {
-  final result = await _auth.signInWithEmailAndPassword(email: email, password: password);
+  try {
+    final result = await _auth.signInWithEmailAndPassword(email: email, password: password);
 
-  await _firestore.collection('users').doc(result.user!.uid).update({
-    'isOnline': true,
-  });
+    await _firestore.collection('users').doc(result.user!.uid).update({
+      'isOnline': true,
+    });
 
-  return result.user;
+    return result.user;
+  } on FirebaseAuthException catch (e) {
+    print('[AuthRepository.signIn] ERROR');
+    print('Code: ${e.code}');
+    print('Message: ${e.message}');
+    rethrow; // send it back to LoginScreen for UI display
+  }
 }
 
 

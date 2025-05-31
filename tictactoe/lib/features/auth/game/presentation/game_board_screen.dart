@@ -94,49 +94,51 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
 
 void _onRoomUpdate(DocumentSnapshot doc) async {
   if (!doc.exists) {
-    if (mounted && !_snackBarShown) {
+    Future.microtask(() {
+      if (!mounted || _snackBarShown) return;
       _snackBarShown = true;
-      Future.microtask(() async {
-        while (Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-          await Future.delayed(const Duration(milliseconds: 10));
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Game ended or opponent left.')),
-          );
-          Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
-        }
-      });
-    }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Game ended or opponent left.')),
+      );
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
+    });
     return;
   }
 
   final data = doc.data() as Map<String, dynamic>;
 
-  final status = data['status'];
-  if (status == 'ended' || status == 'cancelled') {
-    if (mounted && !_snackBarShown) {
+  if (data['roomDeleted'] == true) {
+    Future.microtask(() {
+      if (!mounted || _snackBarShown) return;
       _snackBarShown = true;
-      Future.microtask(() async {
-        while (Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-          await Future.delayed(const Duration(milliseconds: 10));
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Game ended or cancelled.')),
-          );
-          Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
-        }
-      });
-    }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Game ended or opponent left.')),
+      );
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
+    });
     return;
   }
 
-  final rawRematch = data['rematchRequest'];
-  final Map<String, dynamic>? rematch =
-      rawRematch != null ? Map<String, dynamic>.from(rawRematch as Map<dynamic, dynamic>) : null;
+  final status = data['status'];
+  if (status == 'ended' || status == 'cancelled') {
+    Future.microtask(() {
+      if (!mounted || _snackBarShown) return;
+      _snackBarShown = true;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Game ended or cancelled.')),
+      );
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
+    });
+    return;
+  }
+
+  final rematchRaw = data['rematchRequest'];
+  final Map<String, dynamic>? rematch = rematchRaw != null
+      ? Map<String, dynamic>.from(rematchRaw as Map<dynamic, dynamic>)
+      : null;
 
   if (rematch != null &&
       rematch['to'] == FirebaseAuth.instance.currentUser?.uid &&
@@ -146,7 +148,7 @@ void _onRoomUpdate(DocumentSnapshot doc) async {
 
   if (rematch != null && rematch['status'] == 'accepted') {
     final newBoard = List.filled(9, '');
-    final int minutes = rematch['timeControlMinutes'] ?? (data['timeControlMinutes'] ?? 5);
+    final minutes = rematch['timeControlMinutes'] ?? (data['timeControlMinutes'] ?? 5);
     final newTimeControl = Duration(minutes: minutes);
 
     await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
@@ -163,26 +165,25 @@ void _onRoomUpdate(DocumentSnapshot doc) async {
       },
     });
 
-    if (mounted) {
-      setState(() {
-        board = newBoard;
-        currentTurn = 'X';
-        winner = null;
-        moveHistory.clear();
-        gameEnded = false;
-        isMyTurn = (widget.symbol == 'X');
-        myTime = newTimeControl;
-        opponentTime = newTimeControl;
-      });
-      _startCorrectTimer();
-    }
+    if (!mounted) return;
+    setState(() {
+      board = newBoard;
+      currentTurn = 'X';
+      winner = null;
+      moveHistory.clear();
+      gameEnded = false;
+      isMyTurn = (widget.symbol == 'X');
+      myTime = newTimeControl;
+      opponentTime = newTimeControl;
+    });
+
+    _startCorrectTimer();
   }
 
   if (rematch != null && rematch['status'] == 'declined') {
-    await FirebaseFirestore.instance
-        .collection('rooms')
-        .doc(widget.gameId)
-        .update({'rematchRequest': FieldValue.delete()});
+    await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
+      'rematchRequest': FieldValue.delete(),
+    });
 
     Future.microtask(() async {
       if (!mounted) return;
@@ -200,7 +201,7 @@ void _onRoomUpdate(DocumentSnapshot doc) async {
         ),
       );
       if (mounted) {
-        Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+        Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
       }
     });
   }
@@ -209,9 +210,12 @@ void _onRoomUpdate(DocumentSnapshot doc) async {
   final newIsMyTurn = (data['currentTurn'] ?? 'X') == widget.symbol;
   final turnChanged = previousIsMyTurn != newIsMyTurn;
 
-  final playerTimes = data['playerTimes'] ??
-      {'X': widget.timeControl.inSeconds, 'O': widget.timeControl.inSeconds};
+  final playerTimes = data['playerTimes'] ?? {
+    'X': widget.timeControl.inSeconds,
+    'O': widget.timeControl.inSeconds,
+  };
 
+  if (!mounted) return;
   setState(() {
     board = List<String>.from(data['board'] ?? List.filled(9, ''));
     currentTurn = data['currentTurn'] ?? 'X';
@@ -220,46 +224,43 @@ void _onRoomUpdate(DocumentSnapshot doc) async {
     gameEnded = winner != null && winner != '';
     moveHistory = List<String>.from(data['moveHistory'] ?? []);
     myTime = Duration(seconds: playerTimes[widget.symbol] ?? widget.timeControl.inSeconds);
-    opponentTime =
-        Duration(seconds: playerTimes[widget.symbol == 'X' ? 'O' : 'X'] ?? widget.timeControl.inSeconds);
+    opponentTime = Duration(seconds: playerTimes[widget.symbol == 'X' ? 'O' : 'X'] ?? widget.timeControl.inSeconds);
   });
 
-  if (turnChanged) _startCorrectTimer();
+  if (turnChanged) {
+    _startCorrectTimer();
+  }
 
- if (gameEnded && winner != null && winner != '' && winner != 'draw') {
-  final user = FirebaseAuth.instance.currentUser;
-  if (user == null) return;
+  if (gameEnded && !_statsUpdateInProgress && winner != null && winner != '' && winner != 'draw') {
+    _statsUpdateInProgress = true;
 
-  final userId = user.uid;
-  final userRef = FirebaseFirestore.instance.collection('users').doc(userId);
-  final roomRef = FirebaseFirestore.instance.collection('rooms').doc(widget.gameId);
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
+      final roomRef = FirebaseFirestore.instance.collection('rooms').doc(widget.gameId);
+      final statsUpdated = Map<String, dynamic>.from(data['statsUpdated'] ?? {});
 
-  try {
-    await FirebaseFirestore.instance.runTransaction((transaction) async {
-      final freshRoomSnap = await transaction.get(roomRef);
-      final roomData = freshRoomSnap.data() as Map<String, dynamic>;
-      final Map<String, dynamic> statsUpdated = Map<String, dynamic>.from(roomData['statsUpdated'] ?? {});
-
-      if (statsUpdated[userId] == true) {
-        print('[TXN] Stats already updated for $userId');
+      if (statsUpdated[user.uid] == true) {
+        print('[STATS] Already updated for this user (${user.uid}), skipping...');
+        _statsUpdateInProgress = false;
         return;
       }
 
-      if (winner == widget.symbol) {
-        print('[TXN] I won, incrementing wins');
-        transaction.update(userRef, {'wins': FieldValue.increment(1)});
-      } else {
-        print('[TXN] I lost, incrementing losses');
-        transaction.update(userRef, {'losses': FieldValue.increment(1)});
+      try {
+        if (winner == widget.symbol) {
+          await userRef.update({'wins': FieldValue.increment(1)});
+        } else {
+          await userRef.update({'losses': FieldValue.increment(1)});
+        }
+        await roomRef.update({'statsUpdated.${user.uid}': true});
+        print('[STATS] Updated stats for ${user.uid}');
+      } catch (e) {
+        print('[STATS ERROR] $e');
+      } finally {
+        _statsUpdateInProgress = false;
       }
-
-      transaction.update(roomRef, {'statsUpdated.$userId': true});
-      print('[TXN] Stats written and marked updated for $userId');
-    });
-  } catch (e) {
-    print('[TXN ERROR] Failed to update stats in transaction: $e');
+    }
   }
-}
 }
 
   void _endGame({required bool lost}) async {
@@ -376,117 +377,57 @@ void _onRoomUpdate(DocumentSnapshot doc) async {
     ).then((_) => countdown?.cancel());
   }
 
-  void _showQuitDialog() {
-    showDialog(
-      context: context,
-      builder:
-          (_) => AlertDialog(
-            title: const Text('Quit Game?'),
-            content: const Text(
-              'Are you sure you want to quit? You will forfeit this match.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  print('[QUIT] Quit button pressed');
-                  Navigator.of(context).pop();
-                  final opponentSymbol = widget.symbol == 'X' ? 'O' : 'X';
-                  final user = FirebaseAuth.instance.currentUser;
-                  if (user != null) {
-                    final userRef = FirebaseFirestore.instance
-                        .collection('users')
-                        .doc(user.uid);
-                    final roomRef = FirebaseFirestore.instance
-                        .collection('rooms')
-                        .doc(widget.gameId);
-                    try {
-                      final roomSnap = await roomRef.get();
-                      final data = roomSnap.data();
-                      final alreadyEnded =
-                          data?['winner'] != null && data?['winner'] != '';
+ void _showQuitDialog() async {
+  final user = FirebaseAuth.instance.currentUser;
 
-                      if (!alreadyEnded) {
-                        await roomRef.update({
-                          'winner': opponentSymbol,
-                          'gameEndedBy': widget.username,
-                        });
-                      }
-                    } catch (e) {
-                      print('[QUIT][ERROR] Failed to update room: $e');
-                    }
-                    try {
-                      print('[QUIT] Deleting invites for this room');
-                      final invites =
-                          await FirebaseFirestore.instance
-                              .collection('invites')
-                              .where('roomId', isEqualTo: widget.gameId)
-                              .get();
-                      for (final doc in invites.docs) {
-                        await doc.reference.delete();
-                      }
-                    } catch (e) {
-                      print('[QUIT][ERROR] Failed to delete invites: $e');
-                    }
-                    try {
-                      print('[QUIT] Updating stats if needed');
-                      final roomSnap = await roomRef.get();
-                      final data = roomSnap.data();
-                      if (data != null) {
-                        final statsUpdated =
-                            (data['statsUpdated'] ?? {})
-                                as Map<String, dynamic>;
-                        if (statsUpdated[user.uid] != true) {
-                          try {
-                            if (opponentSymbol == widget.symbol) {
-                              await userRef.update({
-                                'wins': FieldValue.increment(1),
-                              });
-                            } else {
-                              await userRef.update({
-                                'losses': FieldValue.increment(1),
-                              });
-                            }
-                            await roomRef.update({
-                              'statsUpdated.${user.uid}': true,
-                            });
-                          } catch (e) {
-                            print('[QUIT][ERROR] Failed to update stats: $e');
-                          }
-                        }
-                      }
-                    } catch (e) {
-                      print(
-                        '[QUIT][ERROR] Failed to get room or update stats: $e',
-                      );
-                    }
-                    try {
-                      print('[QUIT] Waiting 2 seconds before deleting room');
-                      await Future.delayed(const Duration(seconds: 2));
-                      print('[QUIT] Deleting room');
-                      await roomRef.delete();
-                    } catch (e) {
-                      print('[QUIT][ERROR] Failed to delete room: $e');
-                    }
-                    if (mounted) {
-                      print('[QUIT] Navigating to home/lobby');
-                      Navigator.of(
-                        context,
-                      ).pushNamedAndRemoveUntil('/home', (route) => false);
-                    }
-                  } else {
-                    print('[QUIT][ERROR] No user found');
-                  }
-                },
-                child: const Text('Quit', style: TextStyle(color: Colors.red)),
-              ),
-            ],
-          ),
-    );
+  // Leave immediately if game over
+  if (winner != null && winner != '') {
+    if (user != null) {
+      await FirebaseFirestore.instance
+          .collection('rooms')
+          .doc(widget.gameId)
+          .delete();
+    }
+    if (mounted) {
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
+    }
+    return;
   }
+
+  // Show confirmation if game is still active
+  final shouldLeave = await showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('Leave Game?'),
+      content: const Text('You will forfeit if you leave. Are you sure?'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Leave'),
+        ),
+      ],
+    ),
+  ) ?? false;
+
+  if (shouldLeave && user != null) {
+  await FirebaseFirestore.instance
+      .collection('rooms')
+      .doc(widget.gameId)
+      .update({
+        'status': 'cancelled',
+        'roomDeleted': true,
+      });
+
+  if (mounted) {
+    Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
+  }
+}
+}
+
 
   @override
   void dispose() {
@@ -700,104 +641,102 @@ void _onRoomUpdate(DocumentSnapshot doc) async {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        // Prevent system back navigation
-        return false;
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text("Tic Tac Toe"),
-          automaticallyImplyLeading: false,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.exit_to_app, color: Colors.red),
-              tooltip: 'Quit Game',
-              onPressed: _showQuitDialog,
+@override
+Widget build(BuildContext context) {
+  return WillPopScope(
+    onWillPop: () async {
+      _showQuitDialog(); // unified logic
+      return false; // prevent default pop
+    },
+    child: Scaffold(
+      appBar: AppBar(
+        title: const Text("Tic Tac Toe"),
+        automaticallyImplyLeading: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.exit_to_app, color: Colors.red),
+            tooltip: 'Quit Game',
+            onPressed: _showQuitDialog, // ✅ shared method
+          ),
+          IconButton(
+            icon: const Icon(Icons.history),
+            onPressed: _showHistory,
+          ),
+        ],
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _gameStatus(),
+            const SizedBox(height: 16),
+            _buildTimers(),
+            const SizedBox(height: 16),
+            AspectRatio(
+              aspectRatio: 1,
+              child: GridView.builder(
+                itemCount: 9,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                ),
+                itemBuilder: (_, i) => _buildCell(i),
+              ),
             ),
-            IconButton(
-              icon: const Icon(Icons.history),
-              onPressed: _showHistory,
-            ),
-          ],
-        ),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _gameStatus(),
-              const SizedBox(height: 16),
-              _buildTimers(),
-              const SizedBox(height: 16),
-              AspectRatio(
-                aspectRatio: 1,
-                child: GridView.builder(
-                  itemCount: 9,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                  ),
-                  itemBuilder: (_, i) => _buildCell(i),
+            if (gameEnded && winner != null && winner != '')
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Rematch'),
+                  onPressed: () async {
+                    final user = FirebaseAuth.instance.currentUser;
+                    if (user != null) {
+                      await FirebaseFirestore.instance
+                          .collection('rooms')
+                          .doc(widget.gameId)
+                          .update({
+                            'rematchRequest': {
+                              'from': user.uid,
+                              'to': widget.opponentUid,
+                              'status': 'pending',
+                              'timeControlMinutes': widget.timeControl.inMinutes,
+                            },
+                          });
+                      _showRematchWaitingDialog();
+                    }
+                  },
                 ),
               ),
-              if (gameEnded && winner != null && winner != '')
-                Padding(
-                  padding: const EdgeInsets.only(top: 24),
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Rematch'),
-                    onPressed: () async {
-                      final user = FirebaseAuth.instance.currentUser;
-                      if (user != null) {
-                        await FirebaseFirestore.instance
-                            .collection('rooms')
-                            .doc(widget.gameId)
-                            .update({
-                              'rematchRequest': {
-                                'from': user.uid,
-                                'to': widget.opponentUid,
-                                'status': 'pending',
-                                'timeControlMinutes':
-                                    widget.timeControl.inMinutes,
-                              },
-                            });
-                        _showRematchWaitingDialog();
-                      }
-                    },
-                  ),
+            if (gameEnded && winner == 'draw')
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Rematch'),
+                  onPressed: () async {
+                    final user = FirebaseAuth.instance.currentUser;
+                    if (user != null) {
+                      await FirebaseFirestore.instance
+                          .collection('rooms')
+                          .doc(widget.gameId)
+                          .update({
+                            'rematchRequest': {
+                              'from': user.uid,
+                              'to': widget.opponentUid,
+                              'status': 'pending',
+                            },
+                          });
+                      _showRematchWaitingDialog();
+                    }
+                  },
                 ),
-
-              if (gameEnded && winner == 'draw')
-                Padding(
-                  padding: const EdgeInsets.only(top: 24),
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Rematch'),
-                    onPressed: () async {
-                      final user = FirebaseAuth.instance.currentUser;
-                      if (user != null) {
-                        await FirebaseFirestore.instance
-                            .collection('rooms')
-                            .doc(widget.gameId)
-                            .update({
-                              'rematchRequest': {
-                                'from': user.uid,
-                                'to': widget.opponentUid,
-                                'status': 'pending',
-                              },
-                            });
-                        _showRematchWaitingDialog();
-                      }
-                    },
-                  ),
-                ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 class CountdownText extends StatefulWidget {

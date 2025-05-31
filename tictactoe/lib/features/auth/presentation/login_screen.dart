@@ -18,44 +18,53 @@ class _LoginScreenState extends State<LoginScreen> {
   final _authRepo = AuthRepository();
 
   bool loading = false;
+  String? errorMsg;
 
-  void login() async {
-  setState(() => loading = true);
+void login() async {
+  setState(() {
+    loading = true;
+    errorMsg = null;
+  });
+
+  final email = emailController.text.trim();
+  final password = passwordController.text.trim();
+
   try {
-    final user = await _authRepo.signIn(emailController.text, passwordController.text);
+    final user = await _authRepo.signIn(email, password);
+
     if (user != null && _authRepo.isEmailVerified()) {
       Navigator.pushReplacement(
-  context,
-  MaterialPageRoute(builder: (_) => const HomeScreen()),
-);
+        context,
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
     } else {
       showSnack("Please verify your email before logging in.");
     }
   } on FirebaseAuthException catch (e) {
-  switch (e.code) {
-    case 'user-not-found':
-      showSnack("No account found for that email.");
-      break;
-    case 'wrong-password':
-      showSnack("Incorrect password.");
-      break;
-    case 'invalid-email':
-      showSnack("That email address is not valid.");
-      break;
-    case 'too-many-requests':
-      showSnack("Too many attempts. Try again later.");
-      break;
-    default:
-      showSnack("Login failed: ${e.message ?? 'Unknown error'}");
-  }
-} catch (e) {
-  showSnack("Something went wrong. Please check your internet and try again.");
-}
- finally {
+    String msg;
+    switch (e.code) {
+      case 'user-not-found':
+        msg = "No account found for that email.";
+        break;
+      case 'wrong-password':
+        msg = "Incorrect password.";
+        break;
+      case 'invalid-email':
+        msg = "That email address is not valid.";
+        break;
+      case 'too-many-requests':
+        msg = "Too many attempts. Try again later.";
+        break;
+      default:
+        msg = "Login failed: ${e.message ?? 'Unknown error'}";
+    }
+    setState(() => errorMsg = msg);
+  } catch (e) {
+    setState(() => errorMsg = "Something went wrong. Check your internet and try again.");
+  } finally {
     setState(() => loading = false);
   }
 }
-
 
   void showSnack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -70,15 +79,41 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder())),
-            const SizedBox(height: 16),
-            TextField(controller: passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder())),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: loading ? null : login,
-              style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-              child: const Text('Login'),
+            if (errorMsg != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Text(
+                  errorMsg!,
+                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                ),
+              ),
+            TextField(
+              controller: emailController,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
+              ),
             ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 20),
+            loading
+                ? const CircularProgressIndicator()
+                : ElevatedButton(
+                    onPressed: login,
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Login'),
+                  ),
             const SizedBox(height: 10),
             TextButton(
               onPressed: () {
