@@ -47,27 +47,37 @@ class _LobbyScreenState extends State<LobbyScreen> {
     _listenToInvites();
   }
 
-  void _loadProfile() {
-    final u = FirebaseAuth.instance.currentUser;
-    if (u == null) return;
+void _loadProfile() {
+  final u = FirebaseAuth.instance.currentUser;
+  if (u == null) return;
 
-    _profileSub = FirebaseFirestore.instance.collection('users').doc(u.uid).snapshots().listen((doc) async {
-      final data = doc.data();
-      if (data != null) {
-        final plainUsername = data['searchUsername'] ?? '[No username]';
-        final decryptedEmail = data['searchEmail'] ?? '';
-        if (mounted) {
-          setState(() {
-            avatar = data['avatar'] ?? avatar;
-            wins = data['wins'] ?? wins;
-            losses = data['losses'] ?? losses;
-            _decryptedUsername = plainUsername;
-            _decryptedEmail = decryptedEmail;
-          });
-        }
+  _profileSub = FirebaseFirestore.instance.collection('users').doc(u.uid).snapshots().listen((doc) async {
+    final data = doc.data();
+    if (data != null) {
+      final userRef = FirebaseFirestore.instance.collection('users').doc(u.uid);
+
+      if (!data.containsKey('wins')) {
+        await userRef.update({'wins': 0});
       }
-    });
-  }
+      if (!data.containsKey('losses')) {
+        await userRef.update({'losses': 0});
+      }
+
+      final plainUsername = data['searchUsername'] ?? '[No username]';
+      final decryptedEmail = data['searchEmail'] ?? '';
+
+      if (mounted) {
+        setState(() {
+          avatar = data['avatar'] ?? avatar;
+          wins = data['wins'] ?? wins;
+          losses = data['losses'] ?? losses;
+          _decryptedUsername = plainUsername;
+          _decryptedEmail = decryptedEmail;
+        });
+      }
+    }
+  });
+}
 
 void _listenToUsers() {
   final myUid = FirebaseAuth.instance.currentUser?.uid;
@@ -299,7 +309,7 @@ void _listenToUsers() {
       print('[INVITE ERROR] No user data for current user');
       return;
     }
-    final decryptedMyUsername = await EncryptionHelper.decrypt(myData['username']);
+    final decryptedMyUsername = myData['searchUsername'] ?? '[No username]';
     final toUsername = user['username'];
     final toDoc = await FirebaseFirestore.instance
     .collection('users')

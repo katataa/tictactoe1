@@ -92,75 +92,64 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
     });
   }
 
-  void _onRoomUpdate(DocumentSnapshot doc) async {
-    if (!doc.exists) {
-      // Room deleted (opponent left or game ended)
-      if (mounted) {
-        Future.microtask(() async {
-          if (_snackBarShown) return;
-          _snackBarShown = true;
-          while (Navigator.of(context).canPop()) {
-            Navigator.of(context).pop();
-            await Future.delayed(const Duration(milliseconds: 10));
-          }
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Game ended or opponent left.')),
-            );
-            Navigator.of(
-              context,
-            ).pushNamedAndRemoveUntil('/home', (route) => false);
-          }
-        });
-      }
-      return;
+void _onRoomUpdate(DocumentSnapshot doc) async {
+  if (!doc.exists) {
+    if (mounted && !_snackBarShown) {
+      _snackBarShown = true;
+      Future.microtask(() async {
+        while (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+          await Future.delayed(const Duration(milliseconds: 10));
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Game ended or opponent left.')),
+          );
+          Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+        }
+      });
     }
-    final data = doc.data() as Map<String, dynamic>;
+    return;
+  }
 
-    final status = data['status'];
-    if (status == 'ended' || status == 'cancelled') {
-      if (mounted) {
-        Future.microtask(() async {
-          if (_snackBarShown) return;
-          _snackBarShown = true;
-          while (Navigator.of(context).canPop()) {
-            Navigator.of(context).pop();
-            await Future.delayed(const Duration(milliseconds: 10));
-          }
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Game ended or cancelled.')),
-            );
-            Navigator.of(
-              context,
-            ).pushNamedAndRemoveUntil('/home', (route) => false);
-          }
-        });
-      }
-      return;
+  final data = doc.data() as Map<String, dynamic>;
+
+  final status = data['status'];
+  if (status == 'ended' || status == 'cancelled') {
+    if (mounted && !_snackBarShown) {
+      _snackBarShown = true;
+      Future.microtask(() async {
+        while (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+          await Future.delayed(const Duration(milliseconds: 10));
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Game ended or cancelled.')),
+          );
+          Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+        }
+      });
     }
-    final rawRematch = data['rematchRequest'];
-    final Map<String, dynamic>? rematch =
-        rawRematch != null
-            ? Map<String, dynamic>.from(rawRematch as Map<dynamic, dynamic>)
-            : null;
+    return;
+  }
 
-    if (rematch != null &&
-        rematch['to'] == FirebaseAuth.instance.currentUser?.uid &&
-        rematch['status'] == 'pending') {
-      _showRematchRequestDialog(); // receiver sees popup
-    }
+  final rawRematch = data['rematchRequest'];
+  final Map<String, dynamic>? rematch =
+      rawRematch != null ? Map<String, dynamic>.from(rawRematch as Map<dynamic, dynamic>) : null;
 
-    if (rematch != null && rematch['status'] == 'accepted') {
-      final newBoard = List.filled(9, '');
-      final int minutes =
-          rematch['timeControlMinutes'] ?? (data['timeControlMinutes'] ?? 5);
-      final newTimeControl = Duration(minutes: minutes);
+  if (rematch != null &&
+      rematch['to'] == FirebaseAuth.instance.currentUser?.uid &&
+      rematch['status'] == 'pending') {
+    _showRematchRequestDialog();
+  }
 
-      await FirebaseFirestore.instance
-    .collection('rooms')
-    .doc(widget.gameId)
-    .update({
+  if (rematch != null && rematch['status'] == 'accepted') {
+    final newBoard = List.filled(9, '');
+    final int minutes = rematch['timeControlMinutes'] ?? (data['timeControlMinutes'] ?? 5);
+    final newTimeControl = Duration(minutes: minutes);
+
+    await FirebaseFirestore.instance.collection('rooms').doc(widget.gameId).update({
       'board': newBoard,
       'currentTurn': 'X',
       'winner': '',
@@ -174,130 +163,116 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
       },
     });
 
-      if (mounted) {
-        setState(() {
-          board = newBoard;
-          currentTurn = 'X';
-          winner = null;
-          moveHistory.clear();
-          gameEnded = false;
-          isMyTurn = (widget.symbol == 'X');
-          myTime = newTimeControl;
-          opponentTime = newTimeControl;
-        });
-
-        _startCorrectTimer();
-      }
-    }
-
-    if (rematch != null && rematch['status'] == 'declined') {
-      // Clear rematchRequest field
-      await FirebaseFirestore.instance
-          .collection('rooms')
-          .doc(widget.gameId)
-          .update({'rematchRequest': FieldValue.delete()});
-
-      // Navigate both players to lobby after showing alert
-      Future.microtask(() async {
-        if (!mounted) return;
-        await showDialog(
-          context: context,
-          builder:
-              (_) => AlertDialog(
-                title: const Text('Rematch Declined'),
-                content: const Text('Opponent declined the rematch.'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('OK'),
-                  ),
-                ],
-              ),
-        );
-        if (mounted) {
-          Navigator.of(
-            context,
-          ).pushNamedAndRemoveUntil('/home', (route) => false);
-        }
+    if (mounted) {
+      setState(() {
+        board = newBoard;
+        currentTurn = 'X';
+        winner = null;
+        moveHistory.clear();
+        gameEnded = false;
+        isMyTurn = (widget.symbol == 'X');
+        myTime = newTimeControl;
+        opponentTime = newTimeControl;
       });
-    }
-    final previousIsMyTurn = isMyTurn;
-    final newIsMyTurn = (data['currentTurn'] ?? 'X') == widget.symbol;
-    final turnChanged = previousIsMyTurn != newIsMyTurn;
-
-    final playerTimes =
-        data['playerTimes'] ??
-        {'X': widget.timeControl.inSeconds, 'O': widget.timeControl.inSeconds};
-
-    setState(() {
-      board = List<String>.from(data['board'] ?? List.filled(9, ''));
-      currentTurn = data['currentTurn'] ?? 'X';
-      isMyTurn = currentTurn == widget.symbol;
-      winner = data['winner'];
-      gameEnded = winner != null && winner != '';
-      moveHistory = List<String>.from(data['moveHistory'] ?? []);
-
-      myTime = Duration(
-        seconds: playerTimes[widget.symbol] ?? widget.timeControl.inSeconds,
-      );
-      opponentTime = Duration(
-        seconds:
-            playerTimes[widget.symbol == 'X' ? 'O' : 'X'] ??
-            widget.timeControl.inSeconds,
-      );
-    });
-
-    if (turnChanged) {
       _startCorrectTimer();
-    }
-
-    // Robust win/loss update: only increment if not already updated for this user in this game
-    if (gameEnded &&
-        !_statsUpdateInProgress &&
-        winner != null &&
-        winner != '' &&
-        winner != 'draw') {
-      _statsUpdateInProgress = true;
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        final userRef = FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid);
-        final roomRef = FirebaseFirestore.instance
-            .collection('rooms')
-            .doc(widget.gameId);
-        final statsUpdated =
-            (data['statsUpdated'] ?? {}) as Map<String, dynamic>;
-        if (statsUpdated[user.uid] != true) {
-          try {
-            if (winner == widget.symbol) {
-              await userRef.update({'wins': FieldValue.increment(1)});
-            } else {
-              await userRef.update({'losses': FieldValue.increment(1)});
-            }
-            // Mark as updated in Firestore
-            await roomRef.update({'statsUpdated.${user.uid}': true});
-          } catch (e) {
-            // If update fails, allow retry on next update
-            _statsUpdateInProgress = false;
-          }
-        }
-      }
     }
   }
 
-  void _endGame({required bool lost}) async {
-  final mySymbol = widget.symbol;
-  final winnerSymbol = lost ? (mySymbol == 'X' ? 'O' : 'X') : mySymbol;
+  if (rematch != null && rematch['status'] == 'declined') {
+    await FirebaseFirestore.instance
+        .collection('rooms')
+        .doc(widget.gameId)
+        .update({'rematchRequest': FieldValue.delete()});
 
-  await FirebaseFirestore.instance
-      .collection('rooms')
-      .doc(widget.gameId)
-      .update({'winner': winnerSymbol});
+    Future.microtask(() async {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Rematch Declined'),
+          content: const Text('Opponent declined the rematch.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      if (mounted) {
+        Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
+      }
+    });
+  }
 
-  activeTimer?.cancel();
+  final previousIsMyTurn = isMyTurn;
+  final newIsMyTurn = (data['currentTurn'] ?? 'X') == widget.symbol;
+  final turnChanged = previousIsMyTurn != newIsMyTurn;
+
+  final playerTimes = data['playerTimes'] ??
+      {'X': widget.timeControl.inSeconds, 'O': widget.timeControl.inSeconds};
+
+  setState(() {
+    board = List<String>.from(data['board'] ?? List.filled(9, ''));
+    currentTurn = data['currentTurn'] ?? 'X';
+    isMyTurn = currentTurn == widget.symbol;
+    winner = data['winner'];
+    gameEnded = winner != null && winner != '';
+    moveHistory = List<String>.from(data['moveHistory'] ?? []);
+    myTime = Duration(seconds: playerTimes[widget.symbol] ?? widget.timeControl.inSeconds);
+    opponentTime =
+        Duration(seconds: playerTimes[widget.symbol == 'X' ? 'O' : 'X'] ?? widget.timeControl.inSeconds);
+  });
+
+  if (turnChanged) _startCorrectTimer();
+
+ if (gameEnded && winner != null && winner != '' && winner != 'draw') {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+
+  final userId = user.uid;
+  final userRef = FirebaseFirestore.instance.collection('users').doc(userId);
+  final roomRef = FirebaseFirestore.instance.collection('rooms').doc(widget.gameId);
+
+  try {
+    await FirebaseFirestore.instance.runTransaction((transaction) async {
+      final freshRoomSnap = await transaction.get(roomRef);
+      final roomData = freshRoomSnap.data() as Map<String, dynamic>;
+      final Map<String, dynamic> statsUpdated = Map<String, dynamic>.from(roomData['statsUpdated'] ?? {});
+
+      if (statsUpdated[userId] == true) {
+        print('[TXN] Stats already updated for $userId');
+        return;
+      }
+
+      if (winner == widget.symbol) {
+        print('[TXN] I won, incrementing wins');
+        transaction.update(userRef, {'wins': FieldValue.increment(1)});
+      } else {
+        print('[TXN] I lost, incrementing losses');
+        transaction.update(userRef, {'losses': FieldValue.increment(1)});
+      }
+
+      transaction.update(roomRef, {'statsUpdated.$userId': true});
+      print('[TXN] Stats written and marked updated for $userId');
+    });
+  } catch (e) {
+    print('[TXN ERROR] Failed to update stats in transaction: $e');
+  }
+}
 }
 
+  void _endGame({required bool lost}) async {
+    final mySymbol = widget.symbol;
+    final winnerSymbol = lost ? (mySymbol == 'X' ? 'O' : 'X') : mySymbol;
+
+    await FirebaseFirestore.instance
+        .collection('rooms')
+        .doc(widget.gameId)
+        .update({'winner': winnerSymbol});
+
+    activeTimer?.cancel();
+  }
 
   void _showRematchWaitingDialog() {
     int secondsLeft = 30;
@@ -429,11 +404,17 @@ class _GameBoardScreenState extends State<GameBoardScreen> {
                         .collection('rooms')
                         .doc(widget.gameId);
                     try {
-                      print('[QUIT] Updating room winner and gameEndedBy');
-                      await roomRef.update({
-                        'winner': opponentSymbol,
-                        'gameEndedBy': widget.username,
-                      });
+                      final roomSnap = await roomRef.get();
+                      final data = roomSnap.data();
+                      final alreadyEnded =
+                          data?['winner'] != null && data?['winner'] != '';
+
+                      if (!alreadyEnded) {
+                        await roomRef.update({
+                          'winner': opponentSymbol,
+                          'gameEndedBy': widget.username,
+                        });
+                      }
                     } catch (e) {
                       print('[QUIT][ERROR] Failed to update room: $e');
                     }
